@@ -6,6 +6,12 @@ import Foundation
 import SwiftUI
 @preconcurrency import UserNotifications
 
+// MARK: - Notifications
+
+extension Notification.Name {
+    static let menuBarItemsDidChange = Notification.Name("menuBarItemsDidChange")
+}
+
 // MARK: - Undo/Redo
 
 private struct UndoSnapshot: Equatable {
@@ -149,6 +155,7 @@ final class RemapStore: ObservableObject {
 
     static let statusURL: URL = appSupportURL.appendingPathComponent("status.json")
     static let globalVarsURL: URL = appSupportURL.appendingPathComponent("global_vars.json")
+    static let menuBarItemsURL: URL = appSupportURL.appendingPathComponent("menu_bar_items.json")
 
     init(engine: KeyboardRemapEngine? = nil, daemonMode: Bool = false) {
         self.engine = engine ?? KeyboardRemapEngine()
@@ -230,6 +237,9 @@ final class RemapStore: ObservableObject {
             guard let self else { return }
             self.debouncedFilteredManipulators = self.computeFilteredManipulators()
         }
+
+        // Load menu bar items
+        self.menuBarItems = Self.loadMenuBarItems()
     }
 
     deinit {
@@ -249,6 +259,18 @@ final class RemapStore: ObservableObject {
     // MARK: - Derived state
 
     /// Cached tags and folders, invalidated when manipulators change.
+    // MARK: - Menu Bar Items
+
+    @Published var menuBarItems: [MenuBarItem] = []
+    @Published var selectedMenuBarItemID: UUID?
+
+    var selectedMenuBarItem: MenuBarItem? {
+        guard let id = selectedMenuBarItemID else { return nil }
+        return menuBarItems.first { $0.id == id }
+    }
+
+    // MARK: - Derived state
+
     @Published private var _allTags: [String] = []
     @Published private var _allFolders: [String] = []
 
@@ -449,6 +471,128 @@ final class RemapStore: ObservableObject {
         updateManipulator(manipulatorID) { manipulator in
             manipulator.conditions.move(fromOffsets: source, toOffset: destination)
         }
+    }
+
+    // MARK: - Menu Bar Items CRUD
+
+    func addMenuBarItem() {
+        let item = MenuBarItem(name: "New Menu Item")
+        menuBarItems.append(item)
+        selectedMenuBarItemID = item.id
+        saveMenuBarItems()
+    }
+
+    func duplicateMenuBarItem(_ id: UUID) {
+        guard let source = menuBarItems.first(where: { $0.id == id }) else { return }
+        var copy = source
+        copy.id = UUID()
+        copy.name = source.name + " Copy"
+        if let index = menuBarItems.firstIndex(where: { $0.id == id }) {
+            menuBarItems.insert(copy, at: index + 1)
+        } else {
+            menuBarItems.append(copy)
+        }
+        selectedMenuBarItemID = copy.id
+        saveMenuBarItems()
+    }
+
+    func deleteMenuBarItem(_ id: UUID) {
+        guard let index = menuBarItems.firstIndex(where: { $0.id == id }) else { return }
+        let nextSelection: UUID? = {
+            if menuBarItems.indices.contains(index + 1) {
+                return menuBarItems[index + 1].id
+            } else if menuBarItems.indices.contains(index - 1) {
+                return menuBarItems[index - 1].id
+            } else {
+                return nil
+            }
+        }()
+        if selectedMenuBarItemID == id {
+            selectedMenuBarItemID = nextSelection
+        }
+        menuBarItems.remove(at: index)
+        saveMenuBarItems()
+    }
+
+    func updateMenuBarItem(_ id: UUID, _ transform: (inout MenuBarItem) -> Void) {
+        guard let index = menuBarItems.firstIndex(where: { $0.id == id }) else { return }
+        transform(&menuBarItems[index])
+        saveMenuBarItems()
+    }
+
+    func updateSelectedMenuBarItem(_ transform: (inout MenuBarItem) -> Void) {
+        guard let id = selectedMenuBarItemID else { return }
+        updateMenuBarItem(id, transform)
+    }
+
+    func addMenuBarChildItem(to parentID: UUID) {
+        guard let index = menuBarItems.firstIndex(where: { $0.id == parentID }) else { return }
+        let child = MenuBarItem(name: "Sub Item")
+        menuBarItems[index].children.append(child)
+        saveMenuBarItems()
+    }
+
+    func updateMenuBarChildItem(_ childID: UUID, in parentID: UUID, _ transform: (inout MenuBarItem) -> Void) {
+        guard let parentIndex = menuBarItems.firstIndex(where: { $0.id == parentID }) else { return }
+        guard let childIndex = menuBarItems[parentIndex].children.firstIndex(where: { $0.id == childID }) else { return }
+        transform(&menuBarItems[parentIndex].children[childIndex])
+        saveMenuBarItems()
+    }
+
+    func removeMenuBarSubItem(parentID: UUID, at indexSet: IndexSet) {
+        guard let parentIndex = menuBarItems.firstIndex(where: { $0.id == parentID }) else { return }
+        for index in indexSet.sorted(by: >) {
+            guard menuBarItems[parentIndex].children.indices.contains(index) else { continue }
+            menuBarItems[parentIndex].children.remove(at: index)
+        }
+        saveMenuBarItems()
+    }
+
+    func deleteMenuBarChildItem(_ childID: UUID, from parentID: UUID) {
+        guard let parentIndex = menuBarItems.firstIndex(where: { $0.id == parentID }) else { return }
+        menuBarItems[parentIndex].children.removeAll { $0.id == childID }
+        saveMenuBarItems()
+    }
+
+    func moveMenuBarItem(from source: IndexSet, to destination: Int) {
+        menuBarItems.move(fromOffsets: source, toOffset: destination)
+        saveMenuBarItems()
+    }
+
+    func toggleMenuBarItemSeparator(_ id: UUID) {
+        guard let index = menuBarItems.firstIndex(where: { $0.id == id }) else { return }
+        menuBarItems[index].isSeparator.toggle()
+        if menuBarItems[index].isSeparator {
+            menuBarItems[index].name = "Separator"
+            menuBarItems[index].leftClickAction = nil
+            menuBarItems[index].rightClickAction = nil
+            menuBarItems[index].children = []
+        }
+        saveMenuBarItems()
+    }
+
+    // MARK: - Menu Bar Action Execution
+
+    func executeMenuBarAction(_ action: MenuBarItemAction) {
+        action.execute(store: self)
+    }
+
+    // MARK: - Menu Bar Item helpers (used by MenuBarItemAction.execute)
+
+    func runShellCommand(_ command: String) -> String {
+        runShell(command)
+    }
+
+    func openApplication(bundleID: String, name: String) {
+        openApp(bundleID: bundleID, name: name)
+    }
+
+    func postKeyCombo(modifiers: Set<ModifierKey>, keyID: String) {
+        postKeyCombo(modifiers: modifiers, keyID: keyID, proxy: nil)
+    }
+
+    func showNotificationMessage(_ message: String) {
+        showNotification(message)
     }
 
     // MARK: - Additional Triggers
@@ -734,6 +878,25 @@ final class RemapStore: ObservableObject {
     static func saveGlobalVariables(_ vars: [String: String]) {
         guard let data = try? JSONEncoder().encode(vars) else { return }
         try? data.write(to: globalVarsURL)
+    }
+
+    // MARK: - Menu Bar Items Persistence
+
+    static func loadMenuBarItems() -> [MenuBarItem] {
+        guard let data = try? Data(contentsOf: menuBarItemsURL) else { return MenuBarItem.defaults() }
+        guard let config = try? JSONDecoder().decode(MenuBarItemsConfig.self, from: data) else { return MenuBarItem.defaults() }
+        return config.items
+    }
+
+    func saveMenuBarItems() {
+        let config = MenuBarItemsConfig(items: menuBarItems)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        guard let data = try? encoder.encode(config) else { return }
+        Self.ensureAppSupportDirectory()
+        try? data.write(to: Self.menuBarItemsURL)
+        // Notify the app to rebuild the menu bar
+        NotificationCenter.default.post(name: .menuBarItemsDidChange, object: nil)
     }
 
     /// Watch the active profile config file for external changes using kqueue,
@@ -1587,7 +1750,7 @@ final class RemapStore: ObservableObject {
 
     /// Expand {variable_name} tokens in text using a regex-based approach
     /// that avoids O(n²) character-by-character scanning for long strings.
-    private func expandVariableTokens(in text: String) -> String {
+    func expandVariableTokens(in text: String) -> String {
         guard text.contains("{") else { return text }
         // Regex matches {name} where name is alphanumeric/underscore/hyphen
         guard let regex = try? NSRegularExpression(pattern: "\\{([^}]+)\\}", options: []) else { return text }
@@ -1609,7 +1772,7 @@ final class RemapStore: ObservableObject {
         return result
     }
 
-    fileprivate func postKeyCombo(modifiers: Set<ModifierKey>, keyID: String, proxy: CGEventTapProxy? = nil) {
+    func postKeyCombo(modifiers: Set<ModifierKey>, keyID: String, proxy: CGEventTapProxy? = nil) {
         let source = CGEventSource(stateID: .hidSystemState)
         let flagBased = modifiers.compactMap { $0.cgFlag }
         let combined = flagBased.reduce(into: CGEventFlags()) { $0.insert($1) }
@@ -1777,7 +1940,7 @@ final class RemapStore: ObservableObject {
         _ = Self.runAppleScript(script)
     }
 
-    fileprivate func showNotification(_ message: String) {
+    func showNotification(_ message: String) {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { [center] granted, _ in
             guard granted else { return }

@@ -34,7 +34,7 @@ final class KeyboardRemapEngine {
     private var sequenceProgress: [String: SequenceProgress] = [:]
 
     /// A trigger group bundles one trigger with its own conditions.
-    private struct TriggerGroup {
+    struct TriggerGroup {
         let trigger: ManipulatorTrigger
         let conditions: [Condition]
         let groupIndex: Int
@@ -48,12 +48,12 @@ final class KeyboardRemapEngine {
     /// Lightweight route entry: stores only the manipulator ID instead of the full
     /// ~1KB Manipulator struct. The actual Manipulator is looked up from a dictionary
     /// (`manipulatorCache`) that lives alongside the routing arrays.
-    private struct ManipulatorRoute {
+    struct ManipulatorRoute {
         let manipulatorID: UUID
         let triggerGroups: [TriggerGroup]
     }
 
-    private struct RoutingCache {
+    struct RoutingCache {
         /// Route arrays store lightweight entries (UUID + trigger groups).
         var all: [ManipulatorRoute] = []
         var keyboard: [ManipulatorRoute] = []
@@ -136,7 +136,7 @@ final class KeyboardRemapEngine {
 
         /// Check if two manipulators differ in routing-relevant properties.
         /// (name, notes, folder, and tags are NOT routing-relevant.)
-        private static func hasRoutingRelevantChange(_ old: Manipulator, _ new: Manipulator) -> Bool {
+        static func hasRoutingRelevantChange(_ old: Manipulator, _ new: Manipulator) -> Bool {
             return old.isEnabled != new.isEnabled
                 || old.manipulatorType != new.manipulatorType
                 || old.trigger != new.trigger
@@ -147,7 +147,7 @@ final class KeyboardRemapEngine {
         }
 
         /// Insert a single manipulator into the cache (builds its route).
-        private mutating func insert(manipulator: Manipulator) {
+        mutating func insert(manipulator: Manipulator) {
             guard manipulator.isEnabled else { return }
             let groups = Self.triggerGroups(for: manipulator)
             let eventGroups = groups.filter { $0.trigger.triggerName.isEmpty && $0.trigger.stringTrigger == nil }
@@ -193,7 +193,7 @@ final class KeyboardRemapEngine {
         }
 
         /// Remove all route entries for a given manipulator ID from every routing array.
-        private mutating func remove(manipulatorID id: UUID) {
+        mutating func remove(manipulatorID id: UUID) {
             let removeFrom: [WritableKeyPath<RoutingCache, [ManipulatorRoute]>] = [
                 \.all, \.keyboard, \.pointing, \.mouseMotionToScroll,
                 \.stringTriggers, \.hotKeys, \.simultaneous, \.consumer
@@ -203,7 +203,7 @@ final class KeyboardRemapEngine {
             }
         }
 
-        private static func triggerGroups(for manipulator: Manipulator) -> [TriggerGroup] {
+        static func triggerGroups(for manipulator: Manipulator) -> [TriggerGroup] {
             var groups: [TriggerGroup] = []
             groups.reserveCapacity(1 + manipulator.additionalTriggers.count)
             groups.append(TriggerGroup(trigger: manipulator.trigger, conditions: manipulator.conditions, groupIndex: 0))
@@ -217,7 +217,7 @@ final class KeyboardRemapEngine {
     /// Bitmask-based modifier key tracking for fast set operations.
     /// Using an OptionSet instead of Set<String> eliminates string hashing
     /// overhead on every flagsChanged/key event.
-    private struct HeldModifierMask: OptionSet, Sendable {
+    struct HeldModifierMask: OptionSet, Sendable {
         let rawValue: UInt16
 
         static let leftControl  = HeldModifierMask(rawValue: 1 << 0)
@@ -1658,7 +1658,7 @@ final class KeyboardRemapEngine {
         return result
     }
 
-    private func conditionMet(_ condition: Condition) -> Bool {
+    func conditionMet(_ condition: Condition) -> Bool {
         switch condition.kind {
         case .frontmostApp:
             let app = cachedFrontmostApp ?? NSWorkspace.shared.frontmostApplication
@@ -1700,7 +1700,7 @@ final class KeyboardRemapEngine {
         }
     }
 
-    private func compare(_ actual: String, _ op: ComparisonOp, _ expected: String) -> Bool {
+    func compare(_ actual: String, _ op: ComparisonOp, _ expected: String) -> Bool {
         switch op {
         case .isEqual: return actual.lowercased() == expected.lowercased()
         case .isNotEqual: return actual.lowercased() != expected.lowercased()
@@ -1710,7 +1710,7 @@ final class KeyboardRemapEngine {
         }
     }
 
-    private func modifiersMatch(_ shortcut: KeyShortcut, flags: CGEventFlags) -> Bool {
+    func modifiersMatch(_ shortcut: KeyShortcut, flags: CGEventFlags) -> Bool {
         let mandatoryFlags = shortcut.mandatoryModifiers.compactMap { $0.cgFlag }.reduce(into: CGEventFlags()) { $0.insert($1) }
         let optionalFlags = shortcut.optionalModifiers.compactMap { $0.cgFlag }.reduce(into: CGEventFlags()) { $0.insert($1) }
 
@@ -1982,7 +1982,7 @@ final class KeyboardRemapEngine {
         return value
     }
 
-    private func windowConditionMet(_ condition: Condition) -> Bool {
+    func windowConditionMet(_ condition: Condition) -> Bool {
         let lowered = condition.target.lowercased()
 
         // Check window state keywords: minimized, hidden, visible
