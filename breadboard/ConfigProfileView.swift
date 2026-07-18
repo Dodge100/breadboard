@@ -17,6 +17,21 @@ struct ConfigProfileManagerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Header with close button
+            HStack {
+                Text("Profiles")
+                    .font(.headline)
+                Spacer()
+                Button("Done") {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
             if store.profiles.isEmpty {
                 Spacer()
                 ContentUnavailableView {
