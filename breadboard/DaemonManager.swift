@@ -31,6 +31,14 @@ struct DaemonManager {
         guard let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) else { return false }
         try? data.write(to: plistURL)
 
+        // First unload any existing daemon to prevent stale instances from
+        // accumulating when the binary path changes (e.g. across dev builds).
+        let unloadTask = Process()
+        unloadTask.launchPath = "/bin/launchctl"
+        unloadTask.arguments = ["unload", plistURL.path]
+        try? unloadTask.run()
+        unloadTask.waitUntilExit()
+
         let task = Process()
         task.launchPath = "/bin/launchctl"
         task.arguments = ["load", plistURL.path]
@@ -69,9 +77,16 @@ struct DaemonManager {
     }
 
     static func installIfNeeded() {
+        // Never auto-install the daemon when running from Xcode's build directory.
+        // During development the binary path changes every build, which would cause
+        // the daemon to be reinstalled on every launch — spawning stale instances.
+        guard let currentPath = Bundle.main.executableURL?.path else { return }
+        if currentPath.contains("/DerivedData/") || currentPath.contains("/XCBuildData/") || currentPath.contains("/tmp/") {
+            return
+        }
+
         let defaults = UserDefaults.standard
         let lastPath = defaults.string(forKey: "daemonExecutablePath")
-        let currentPath = Bundle.main.executableURL?.path
         guard lastPath != currentPath || !isInstalled else { return }
         if install() {
             defaults.set(currentPath, forKey: "daemonExecutablePath")

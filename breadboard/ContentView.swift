@@ -1,6 +1,8 @@
 import SwiftUI
 
-enum BreadboardTab: String, CaseIterable, Identifiable {
+// MARK: - Navigation Modes (PearCleaner-style)
+
+enum AppMode: String, CaseIterable, Identifiable {
     case remaps = "Keyboard Remaps"
     case menuBar = "Menu Bar Items"
 
@@ -12,58 +14,44 @@ enum BreadboardTab: String, CaseIterable, Identifiable {
         case .menuBar: return "menubar.rectangle"
         }
     }
+
+    var title: String { rawValue }
 }
+
+// MARK: - Content View
 
 struct ContentView: View {
     @ObservedObject var store: RemapStore
-    @State private var selectedTab: BreadboardTab = .remaps
+    @State private var selectedMode: AppMode = .remaps
 
     var body: some View {
         VStack(spacing: 0) {
-            tabBar
-            Divider()
-            tabContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-
-    private var tabBar: some View {
-        HStack(spacing: 0) {
-            ForEach(BreadboardTab.allCases) { tab in
-                Button {
-                    selectedTab = tab
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: tab.icon)
-                            .font(.system(size: 12))
-                        Text(tab.rawValue)
-                            .font(.system(size: 12, weight: selectedTab == tab ? .semibold : .regular))
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(selectedTab == tab ? Color.accentColor.opacity(0.12) : Color.clear)
-                    .cornerRadius(6)
-                }
-                .buttonStyle(.plain)
-                .help(tab.rawValue)
+            switch selectedMode {
+            case .remaps:
+                RemapView(store: store)
+            case .menuBar:
+                MenuBarItemsView(store: store)
             }
-            Spacer()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial)
-    }
-
-    @ViewBuilder
-    private var tabContent: some View {
-        switch selectedTab {
-        case .remaps:
-            RemapView(store: store)
-        case .menuBar:
-            MenuBarItemsView(store: store)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .toolbar {
+            // PearCleaner-style mode switcher: segmented control in the toolbar
+            ToolbarItem(placement: .navigation) {
+                Picker("Mode", selection: $selectedMode) {
+                    ForEach(AppMode.allCases) { mode in
+                        Label(mode.title, systemImage: mode.icon)
+                            .tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .help("Switch between remap editor and menu bar items")
+            }
         }
     }
 }
+
+// MARK: - Preview
 
 #Preview {
     ContentView(store: RemapStore())
