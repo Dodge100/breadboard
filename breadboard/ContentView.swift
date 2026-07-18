@@ -1,24 +1,13 @@
-//
-//  ContentView.swift
-//  breadboard
-//
-//  Created by Dodge1 on 5/13/26.
-//
-
 import SwiftUI
 
 struct ContentView: View {
+    @ObservedObject var store: RemapStore
+
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
+        RemapView(store: store)
     }
 }
 
 #Preview {
-    ContentView()
+    ContentView(store: RemapStore())
 }

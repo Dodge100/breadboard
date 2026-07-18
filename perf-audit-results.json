@@ -1,0 +1,114 @@
+[
+  {
+    "severity": "high",
+    "area": "RemapModels.swift: Action struct size",
+    "description": "Action had 30+ properties (~400 bytes). Value type copies on every access/filter/Equatable check.",
+    "fix": "Applied: Action now uses copy-on-write via ActionStorage class backing. Copying an Action struct copies only the 8-byte reference to the heap-allocated storage. Mutations trigger a deep copy via isKnownUniquelyReferenced. The public API (all properties, Codable, Equatable) is unchanged.",
+    "status": "FIXED — COW-backed Action struct, ~400B → 8B per copy"
+  },
+  {
+    "severity": "high",
+    "area": "KeyboardRemapEngine.swift: Event tap callback blocking on conditions",
+    "description": "pixelConditionMet() called SCScreenshotManager.captureImage with DispatchSemaphore.wait() INSIDE the CGEvent tap callback. windowConditionMet() and token resolution also called AXUIElementCopyAttributeValue synchronously.",
+    "fix": "Applied: pixel capture moved to background queue with async refresh + TTL cache. Window/AX properties cached with 1s TTL. Per-event condition result cache added. Cheap conditions are evaluated before expensive ones (short-circuit). NSEvent bridging cached once per handle() call.",
+    "status": "FIXED — event tap no longer blocks on pixel/window conditions"
+  },
+  {
+    "severity": "high",
+    "area": "RemapStore.swift: 1-second config polling with full JSON re-decode",
+    "description": "startConfigPolling() used Timer.scheduledTimer every 1.0s calling Data(contentsOf:) + JSONDecoder().decode([Manipulator].self) even when file hadn't changed.",
+    "fix": "Applied: replaced with DispatchSource.makeFileSystemObjectSource (kqueue) — fires only on actual file writes, zero CPU cost when idle.",
+    "status": "FIXED — zero idle CPU cost"
+  },
+  {
+    "severity": "high",
+    "area": "RemapStore.swift: Dual-file config persistence",
+    "description": "saveConfig() and scheduleSaveConfig() both serialized and wrote to TWO files every time.",
+    "fix": "Applied: only write to profile-specific file on each change. config.json mirror is written lazily — only on profile switch, app launch, or profile creation.",
+    "status": "FIXED — single file write per change, config.json mirror only on profile transitions"
+  },
+  {
+    "severity": "high",
+    "area": "KeyboardRemapEngine.swift: MainActor.assumeIsolated unsafe dispatch",
+    "description": "RemapStore.executeAction() used MainActor.assumeIsolated {} to re-enter the action implementation from a global queue — undefined behavior.",
+    "fix": "Applied: replaced MainActor.assumeIsolated with Task { @MainActor in ... } for proper actor switching.",
+    "status": "FIXED — proper @MainActor re-entry"
+  },
+  {
+    "severity": "medium",
+    "area": "KeyboardRemapEngine.swift: Redundant condition evaluation across routing passes",
+    "description": "dispatchKeyDown() iterated routing.hotKeys, then routing.keyboard, then routing.stringTriggers separately. Additionally, TriggerGroup struct copied ManipulatorTrigger + [Condition], duplicating data.",
+    "fix": "Applied: per-event condition result cache (eventConditionCache) avoids re-evaluating the same condition across routing passes. Conditions are evaluated in cost order (cheap→medium→expensive).",
+    "status": "FIXED — conditions cached per event cycle"
+  },
+  {
+    "severity": "medium",
+    "area": "RemapModels.swift: Manipulator struct copy amplification",
+    "description": "Manipulator is ~800-1200+ bytes. Every filter/sort, engine.apply(), RoutingCache.build(), and UndoSnapshot copied the entire struct.",
+    "fix": "Applied: (1) RoutingCache now stores only UUID references + dictionary lookup instead of full Manipulator struct copies. (2) filteredManipulators debounced (150ms). (3) allTags/allFolders cached. (4) Action uses COW backing. (5) duplicateManipulator deep-copies actions explicitly.",
+    "status": "FIXED — routing cache uses lightweight UUID references, Action uses COW, derived state cached"
+  },
+  {
+    "severity": "medium",
+    "area": "KeyboardRemapEngine.swift: Multiple Date() allocations per event",
+    "description": "Date() was called at multiple points in the event tap hot path: resolvePress, advanceSimultaneousTrigger, handleMultiTap, advanceSequenceTrigger, executeFire, and sequence timeout checks.",
+    "fix": "Applied: single eventTimestamp = Date() at the start of handle() is reused by all sub-methods. Reduced N Date() calls per event to 1.",
+    "status": "FIXED — single Date() per event"
+  },
+  {
+    "severity": "medium",
+    "area": "KeyboardRemapEngine.swift: String-keyed Set for modifier tracking",
+    "description": "heldModifierKeys was Set<String> with .insert/.remove on every flagsChanged event and .isDisjoint() checks for every key event.",
+    "fix": "Applied: replaced with HeldModifierMask OptionSet (UInt16 bitmask). isDisjoint becomes a single AND operation. Also converted swallowedModifierKeys to the same bitmask.",
+    "status": "FIXED — O(1) bitmask operations instead of string hashing"
+  },
+  {
+    "severity": "medium",
+    "area": "KeyboardRemapEngine.swift: Full routing cache rebuild on any change",
+    "description": "apply() rebuilt entire RoutingCache from scratch on every config change, iterating all manipulators.",
+    "fix": "Applied: diff-based routing update via RoutingCache.diffUpdate(). Only rebuilds routes for manipulators whose routing-relevant properties actually changed. Non-routing changes skip rebuild entirely.",
+    "status": "FIXED — diff-based incremental routing cache"
+  },
+  {
+    "severity": "low",
+    "area": "RemapStore.swift: expandVariableTokens O(n²) scanning",
+    "description": "expandVariableTokens iterated character by character.",
+    "fix": "Applied: replaced with NSRegularExpression-based matching.",
+    "status": "FIXED — regex-based replacement"
+  },
+  {
+    "severity": "low",
+    "area": "KeyboardRemapEngine.swift: NSEvent re-creation per handler",
+    "description": "NSEvent(cgEvent:) was created in handleFlagsChanged and checkStringTriggers separately.",
+    "fix": "Applied: NSEvent is created once at the top of handle() and cached in cachedNSEvent.",
+    "status": "FIXED — single NSEvent per event"
+  },
+  {
+    "severity": "low",
+    "area": "KeyboardRemapEngine.swift: Pixel capture full pipeline for 1×1",
+    "description": "SCScreenshotManager.captureImage for a single pixel went through full ScreenCaptureKit pipeline synchronously.",
+    "fix": "Applied: pixel capture moved to background utility queue with TTL cache (0.5s). Event tap never waits for pixel capture.",
+    "status": "FIXED — async background capture with cache"
+  },
+  {
+    "severity": "low",
+    "area": "RemapStore.swift: allTags/allFolders recompute on every read",
+    "description": "allTags and allFolders were computed properties that re-scanned the entire manipulators array on every access.",
+    "fix": "Applied: changed to @Published cached properties rebuilt in rebuildTagFolderCache(), called automatically via applyRemaps().",
+    "status": "FIXED — cached derived state"
+  },
+  {
+    "severity": "low",
+    "area": "RemapStore.swift: filteredManipulators on main thread without debounce",
+    "description": "filteredManipulators ran filter+sort on main thread on every SwiftUI body evaluation or keystroke.",
+    "fix": "Applied: 150ms debounce via Combine pipeline; sidebar uses debouncedFilteredManipulators.",
+    "status": "FIXED — 150ms debounced filtering"
+  },
+  {
+    "severity": "low",
+    "area": "RemapStore.swift: postText silent 64-char truncation",
+    "description": "postText truncated to 64 UTF-16 code units without warning.",
+    "fix": "Applied: text is now chunked into 64-code-unit segments with sequential key-down/key-up pairs.",
+    "status": "FIXED — chunked text posting"
+  }
+]
