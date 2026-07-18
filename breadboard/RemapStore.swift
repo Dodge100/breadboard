@@ -483,32 +483,21 @@ final class RemapStore: ObservableObject {
     }
 
     func duplicateMenuBarItem(_ id: UUID) {
-        guard let source = menuBarItems.first(where: { $0.id == id }) else { return }
+        guard let source = menuBarItems.first(where: { $0.id == id }),
+              let index = menuBarItems.firstIndex(where: { $0.id == id }) else { return }
         var copy = source
         copy.id = UUID()
         copy.name = source.name + " Copy"
-        if let index = menuBarItems.firstIndex(where: { $0.id == id }) {
-            menuBarItems.insert(copy, at: index + 1)
-        } else {
-            menuBarItems.append(copy)
-        }
+        menuBarItems.insert(copy, at: index + 1)
         selectedMenuBarItemID = copy.id
         saveMenuBarItems()
     }
 
     func deleteMenuBarItem(_ id: UUID) {
         guard let index = menuBarItems.firstIndex(where: { $0.id == id }) else { return }
-        let nextSelection: UUID? = {
-            if menuBarItems.indices.contains(index + 1) {
-                return menuBarItems[index + 1].id
-            } else if menuBarItems.indices.contains(index - 1) {
-                return menuBarItems[index - 1].id
-            } else {
-                return nil
-            }
-        }()
         if selectedMenuBarItemID == id {
-            selectedMenuBarItemID = nextSelection
+            let next = [index + 1, index - 1].first { menuBarItems.indices.contains($0) }
+            selectedMenuBarItemID = next.map { menuBarItems[$0].id }
         }
         menuBarItems.remove(at: index)
         saveMenuBarItems()
@@ -568,6 +557,12 @@ final class RemapStore: ObservableObject {
             menuBarItems[index].rightClickAction = nil
             menuBarItems[index].children = []
         }
+        saveMenuBarItems()
+    }
+
+    func toggleMenuBarItemEnabled(_ id: UUID) {
+        guard let index = menuBarItems.firstIndex(where: { $0.id == id }) else { return }
+        menuBarItems[index].isEnabled.toggle()
         saveMenuBarItems()
     }
 
@@ -883,8 +878,10 @@ final class RemapStore: ObservableObject {
     // MARK: - Menu Bar Items Persistence
 
     static func loadMenuBarItems() -> [MenuBarItem] {
-        guard let data = try? Data(contentsOf: menuBarItemsURL) else { return MenuBarItem.defaults() }
-        guard let config = try? JSONDecoder().decode(MenuBarItemsConfig.self, from: data) else { return MenuBarItem.defaults() }
+        guard let data = try? Data(contentsOf: menuBarItemsURL),
+              let config = try? JSONDecoder().decode(MenuBarItemsConfig.self, from: data) else {
+            return MenuBarItem.defaults()
+        }
         return config.items
     }
 

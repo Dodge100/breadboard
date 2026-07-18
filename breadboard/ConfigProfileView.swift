@@ -1,12 +1,12 @@
 import SwiftUI
 
-// MARK: - Profile Manager Sheet
+// MARK: - Profile Manager View
 
-/// Full profile management view presented as a sheet.
-/// Allows creating, renaming, duplicating, deleting, and switching profiles.
+/// Profile management view usable in Settings or as a sheet.
 struct ConfigProfileManagerView: View {
     @ObservedObject var store: RemapStore
     @Environment(\.dismiss) private var dismiss
+    @State private var isSheet: Bool = false
 
     @State private var showRenameAlert = false
     @State private var renameTarget: ConfigProfile?
@@ -17,18 +17,6 @@ struct ConfigProfileManagerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // ── Header ────────────────────────────────────────────
-            HStack {
-                Label("Config Profiles", systemImage: "square.on.square")
-                    .font(.headline)
-                Spacer()
-                Button("Done") { dismiss() }
-                    .keyboardShortcut(.escape)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(.ultraThinMaterial)
-
             if store.profiles.isEmpty {
                 Spacer()
                 ContentUnavailableView {
@@ -78,7 +66,7 @@ struct ConfigProfileManagerView: View {
             .padding(.vertical, 10)
             .background(.quaternary.opacity(0.3))
         }
-        .frame(minWidth: 420, minHeight: 360)
+        .frame(minWidth: 380, minHeight: 300)
         .alert("Rename Profile", isPresented: $showRenameAlert) {
             TextField("Name", text: $renameText)
             Button("Rename") {

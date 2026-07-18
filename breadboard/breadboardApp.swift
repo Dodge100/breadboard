@@ -8,219 +8,166 @@ import Combine
 final class StatusBarController: NSObject {
     static let shared = StatusBarController()
     private var statusItems: [UUID: NSStatusItem] = [:]
-    /// Maps button pointer -> item ID so we can retrieve the item on click.
-    private var buttonItemMap: [UnsafeMutableRawPointer: UUID] = [:]
     private var store: RemapStore?
     private var cancellables: Set<AnyCancellable> = []
 
-    /// Install the initial "Breadboard" status item so the app has a presence.
     func install() {
         guard statusItems.isEmpty else { return }
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = item.button {
-            button.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Breadboard")
-        }
-        let menu = NSMenu()
-        menu.addItem(withTitle: "Starting…", action: nil, keyEquivalent: "")
-        item.menu = menu
-        statusItems[UUID()] = item
+        addStatusItem(id: UUID(), icon: "keyboard", menu: placeholderMenu())
     }
 
-    /// Attach the store and rebuild all status items based on menuBarItems.
     func attach(store: RemapStore) {
-        guard self.store == nil else {
-            self.store = store
-            rebuildAll()
-            return
-        }
         self.store = store
         rebuildAll()
-
         store.$menuBarItems
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.rebuildAll()
-            }
+            .sink { [weak self] _ in self?.rebuildAll() }
             .store(in: &cancellables)
     }
 
-    // MARK: - Rebuild
-
     func rebuildAll() {
         guard let store else { return }
-
         let items = store.menuBarItems.filter { $0.isEnabled }
-
-        // Remove status items that are no longer in the list
         let activeIDs = Set(items.map(\.id))
+
+        // Remove stale items
         for (id, item) in statusItems where !activeIDs.contains(id) {
             NSStatusBar.system.removeStatusItem(item)
             statusItems.removeValue(forKey: id)
         }
 
-        // Always keep at least one item so the app doesn't disappear
+        // Keep at least one item so the app doesn't vanish
         if items.isEmpty {
-            ensureFallbackItem()
+            ensureFallback()
             return
         }
+        removeFallback()
 
-        // Create or update status items for each enabled MenuBarItem
+        // Create/update
         for menuItem in items {
-            let statusItem: NSStatusItem
-            if let existing = statusItems[menuItem.id] {
-                statusItem = existing
-            } else {
-                let newItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-                statusItems[menuItem.id] = newItem
-                statusItem = newItem
-            }
-
-            configure(statusItem: statusItem, with: menuItem, store: store)
-            // Map the button to the item ID for click handling
-            if let button = statusItem.button {
-                let ptr = Unmanaged.passUnretained(button).toOpaque()
-                buttonItemMap[ptr] = menuItem.id
-            }
+            let statusItem = statusItems[menuItem.id] ?? addStatusItem(id: menuItem.id, icon: menuItem.icon, menu: nil)
+            configure(statusItem, with: menuItem)
         }
-
-        // Remove the fallback item if it was created earlier
-        removeFallbackItem()
     }
 
-    // MARK: - Status Item Configuration
+    // MARK: - Plumbing
 
-    private func configure(statusItem: NSStatusItem, with item: MenuBarItem, store: RemapStore) {
-        if let button = statusItem.button {
-            if !item.icon.isEmpty {
-                button.image = NSImage(systemSymbolName: item.icon, accessibilityDescription: item.name)
-            } else {
-                button.image = NSImage(systemSymbolName: "circle", accessibilityDescription: item.name)
-            }
-            button.toolTip = item.name
-        }
+    private func addStatusItem(id: UUID, icon: String, menu: NSMenu?) -> NSStatusItem {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.image = NSImage(systemSymbolName: icon, accessibilityDescription: "")
+        item.menu = menu
+        statusItems[id] = item
+        return item
+    }
 
-        // If the item has children, show a submenu
-        // If it only has click actions, respond to clicks directly
-        if !item.children.isEmpty {
-            statusItem.menu = buildMenu(for: item, store: store)
+    private func configure(_ statusItem: NSStatusItem, with mbItem: MenuBarItem) {
+        statusItem.button?.image = NSImage(systemSymbolName: mbItem.icon.isEmpty ? "circle" : mbItem.icon, accessibilityDescription: mbItem.name)
+        statusItem.button?.toolTip = mbItem.name
+
+        if !mbItem.children.isEmpty {
+            statusItem.menu = buildMenu(for: mbItem)
             statusItem.button?.action = nil
             statusItem.button?.target = nil
-        } else if item.leftClickAction?.kind != .none || item.rightClickAction?.kind != .none {
-            // Direct click — no menu, just execute on click
+        } else if mbItem.leftClickAction?.kind != .none || mbItem.rightClickAction?.kind != .none {
             statusItem.menu = nil
-            statusItem.button?.action = #selector(handleStatusItemClick(_:))
+            statusItem.button?.action = #selector(handleClick(_:))
             statusItem.button?.target = self
+            statusItem.button?.cell?.representedObject = mbItem.id
         } else {
-            // No actions — show an empty menu with just the name
-            let menu = NSMenu()
-            menu.addItem(withTitle: item.name, action: nil, keyEquivalent: "")
-            statusItem.menu = menu
+            let m = NSMenu()
+            m.addItem(withTitle: mbItem.name, action: nil, keyEquivalent: "")
+            statusItem.menu = m
             statusItem.button?.action = nil
             statusItem.button?.target = nil
         }
     }
 
-    /// Build a menu for a MenuBarItem that has children.
-    private func buildMenu(for item: MenuBarItem, store: RemapStore) -> NSMenu {
+    // MARK: - Menu building
+
+    private func buildMenu(for item: MenuBarItem) -> NSMenu {
         let menu = NSMenu(title: item.name)
         menu.addItem(withTitle: item.name, action: nil, keyEquivalent: "")
 
+        // Parent item's own actions as menu entries
         if let left = item.leftClickAction, left.kind != .none {
-            let actionItem = NSMenuItem(title: "Left Click: \(left.summary)", action: #selector(executeFromMenu(_:)), keyEquivalent: "")
-            actionItem.representedObject = ItemActionPayload(id: item.id, useRight: false)
-            actionItem.target = self
-            menu.addItem(actionItem)
+            menu.addItem(makeActionItem(title: "Left Click: \(left.summary)", id: item.id, useRight: false))
         }
         if let right = item.rightClickAction, right.kind != .none {
-            let actionItem = NSMenuItem(title: "⌥ Click: \(right.summary)", action: #selector(executeFromMenu(_:)), keyEquivalent: "")
-            actionItem.representedObject = ItemActionPayload(id: item.id, useRight: true)
-            actionItem.target = self
-            menu.addItem(actionItem)
+            menu.addItem(makeActionItem(title: "⌥ Click: \(right.summary)", id: item.id, useRight: true))
         }
-
-        if (!item.children.isEmpty) || (item.leftClickAction?.kind != .none || item.rightClickAction?.kind != .none) {
+        if item.leftClickAction?.kind != .none || item.rightClickAction?.kind != .none || !item.children.isEmpty {
             menu.addItem(.separator())
         }
 
+        // Children
         for child in item.children where child.isEnabled {
             if child.isSeparator {
                 menu.addItem(.separator())
-            } else if !child.children.isEmpty {
-                let submenu = NSMenu(title: child.name)
-                for grandchild in child.children where grandchild.isEnabled {
-                    let grandchildItem = NSMenuItem(title: grandchild.name, action: #selector(executeFromMenu(_:)), keyEquivalent: "")
-                    grandchildItem.representedObject = ItemActionPayload(id: grandchild.id, useRight: false)
-                    grandchildItem.target = self
-                    if !grandchild.icon.isEmpty {
-                        grandchildItem.image = NSImage(systemSymbolName: grandchild.icon, accessibilityDescription: grandchild.name)
-                    }
-                    submenu.addItem(grandchildItem)
-                }
-                let parentItem = NSMenuItem(title: child.name, action: nil, keyEquivalent: "")
-                parentItem.submenu = submenu
-                parentItem.image = NSImage(systemSymbolName: child.icon, accessibilityDescription: child.name)
-                menu.addItem(parentItem)
+            } else if child.children.isEmpty {
+                let mi = makeActionItem(title: child.name, id: child.id, useRight: false)
+                if !child.icon.isEmpty { mi.image = NSImage(systemSymbolName: child.icon, accessibilityDescription: child.name) }
+                menu.addItem(mi)
             } else {
-                let childItem = NSMenuItem(title: child.name, action: #selector(executeFromMenu(_:)), keyEquivalent: "")
-                childItem.representedObject = ItemActionPayload(id: child.id, useRight: false)
-                childItem.target = self
-                if !child.icon.isEmpty {
-                    childItem.image = NSImage(systemSymbolName: child.icon, accessibilityDescription: child.name)
+                let sub = NSMenu(title: child.name)
+                for g in child.children where g.isEnabled {
+                    let gi = makeActionItem(title: g.name, id: g.id, useRight: false)
+                    if !g.icon.isEmpty { gi.image = NSImage(systemSymbolName: g.icon, accessibilityDescription: g.name) }
+                    sub.addItem(gi)
                 }
-                menu.addItem(childItem)
+                let pi = NSMenuItem(title: child.name, action: nil, keyEquivalent: "")
+                pi.submenu = sub
+                if !child.icon.isEmpty { pi.image = NSImage(systemSymbolName: child.icon, accessibilityDescription: child.name) }
+                menu.addItem(pi)
             }
         }
 
         menu.addItem(.separator())
-        let settingsItem = NSMenuItem(title: "Show Breadboard", action: #selector(showBreadboard), keyEquivalent: "")
-        settingsItem.target = self
-        menu.addItem(settingsItem)
+        menu.addItem(makePlainItem(title: "Show Breadboard", action: #selector(showBreadboard)))
         menu.addItem(.separator())
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
-        quitItem.target = self
-        menu.addItem(quitItem)
-
+        menu.addItem(makePlainItem(title: "Quit", action: #selector(quitApp), key: "q"))
         return menu
     }
 
-    // MARK: - Fallback
-
-    private var fallbackItemID: UUID?
-
-    private func ensureFallbackItem() {
-        if fallbackItemID != nil { return }
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = item.button {
-            button.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Breadboard")
-        }
-        let menu = NSMenu()
-        let settingsItem = NSMenuItem(title: "Show Breadboard", action: #selector(showBreadboard), keyEquivalent: "")
-        settingsItem.target = self
-        menu.addItem(settingsItem)
-        menu.addItem(.separator())
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
-        quitItem.target = self
-        menu.addItem(quitItem)
-        item.menu = menu
-        let id = UUID()
-        statusItems[id] = item
-        fallbackItemID = id
+    private func makeActionItem(title: String, id: UUID, useRight: Bool) -> NSMenuItem {
+        let mi = NSMenuItem(title: title, action: #selector(executeAction(_:)), keyEquivalent: "")
+        mi.representedObject = ActionPayload(id: id, useRight: useRight)
+        mi.target = self
+        return mi
     }
 
-    private func removeFallbackItem() {
-        guard let id = fallbackItemID, let item = statusItems[id] else { return }
+    private func makePlainItem(title: String, action: Selector, key: String = "") -> NSMenuItem {
+        let mi = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        mi.target = self
+        return mi
+    }
+
+    // MARK: - Fallback (empty state)
+
+    private var fallbackID: UUID?
+
+    private func ensureFallback() {
+        guard fallbackID == nil else { return }
+        let menu = NSMenu()
+        menu.addItem(makePlainItem(title: "Show Breadboard", action: #selector(showBreadboard)))
+        menu.addItem(.separator())
+        menu.addItem(makePlainItem(title: "Quit", action: #selector(quitApp), key: "q"))
+        let id = UUID()
+        addStatusItem(id: id, icon: "keyboard", menu: menu)
+        fallbackID = id
+    }
+
+    private func removeFallback() {
+        guard let id = fallbackID, let item = statusItems[id] else { return }
         NSStatusBar.system.removeStatusItem(item)
         statusItems.removeValue(forKey: id)
-        fallbackItemID = nil
+        fallbackID = nil
     }
 
     // MARK: - Actions
 
-    @objc private func handleStatusItemClick(_ sender: NSStatusBarButton) {
-        let ptr = Unmanaged.passUnretained(sender).toOpaque()
-        guard let itemID = buttonItemMap[ptr],
-              let store,
-              let item = store.menuBarItems.first(where: { $0.id == itemID }) else { return }
+    @objc private func handleClick(_ sender: NSStatusBarButton) {
+        guard let id = sender.cell?.representedObject as? UUID,
+              let store, let item = store.menuBarItems.first(where: { $0.id == id }) else { return }
         let useOption = NSEvent.modifierFlags.contains(.option)
         if useOption, let action = item.rightClickAction, action.kind != .none {
             store.executeMenuBarAction(action)
@@ -229,44 +176,40 @@ final class StatusBarController: NSObject {
         }
     }
 
-    @objc private func executeFromMenu(_ sender: NSMenuItem) {
-        guard let payload = sender.representedObject as? ItemActionPayload,
-              let store else { return }
-
-        // Search all items (including nested children)
-        func find(id: UUID, in items: [MenuBarItem]) -> MenuBarItem? {
-            for item in items {
-                if item.id == id { return item }
-                if let found = find(id: id, in: item.children) { return found }
-            }
-            return nil
-        }
-        guard let targetItem = find(id: payload.id, in: store.menuBarItems) else { return }
-
-        if payload.useRight, let action = targetItem.rightClickAction, action.kind != .none {
+    @objc private func executeAction(_ sender: NSMenuItem) {
+        guard let p = sender.representedObject as? ActionPayload, let store else { return }
+        guard let target = findItem(id: p.id, in: store.menuBarItems) else { return }
+        if p.useRight, let action = target.rightClickAction, action.kind != .none {
             store.executeMenuBarAction(action)
-        } else if let action = targetItem.leftClickAction, action.kind != .none {
+        } else if let action = target.leftClickAction, action.kind != .none {
             store.executeMenuBarAction(action)
         }
+    }
+
+    private func findItem(id: UUID, in items: [MenuBarItem]) -> MenuBarItem? {
+        for item in items {
+            if item.id == id { return item }
+            if let found = findItem(id: id, in: item.children) { return found }
+        }
+        return nil
     }
 
     @objc private func showBreadboard() {
         NSApp.activate(ignoringOtherApps: true)
-        if let win = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
-            win.makeKeyAndOrderFront(nil)
-        }
+        NSApp.windows.first { $0.identifier?.rawValue == "main" }?.makeKeyAndOrderFront(nil)
     }
 
-    @objc private func quitApp() {
-        NSApp.terminate(nil)
-    }
+    @objc private func quitApp() { NSApp.terminate(nil) }
 }
 
-// MARK: - Helper
+// MARK: - Helpers
 
-private struct ItemActionPayload {
-    let id: UUID
-    let useRight: Bool
+private struct ActionPayload { let id: UUID; let useRight: Bool }
+
+private func placeholderMenu() -> NSMenu {
+    let m = NSMenu()
+    m.addItem(withTitle: "Starting…", action: nil, keyEquivalent: "")
+    return m
 }
 
 // MARK: - App
@@ -274,26 +217,66 @@ private struct ItemActionPayload {
 struct breadboardApp: App {
     @StateObject private var store = RemapStore()
 
-    init() {
-        StatusBarController.shared.install()
-    }
+    init() { StatusBarController.shared.install() }
 
     var body: some Scene {
         WindowGroup(id: "main") {
             ContentView(store: store)
                 .frame(minWidth: 1100, minHeight: 700)
                 .frame(idealWidth: 1280, idealHeight: 800)
-                .onAppear {
-                    StatusBarController.shared.attach(store: store)
-                }
+                .onAppear { StatusBarController.shared.attach(store: store) }
         }
         .windowResizability(.contentMinSize)
+        .commands {
+            // Add standard File menu items for manipulator management
+            CommandGroup(after: .newItem) {
+                Button("New Manipulator") {
+                    store.addManipulator()
+                }
+                .keyboardShortcut("n", modifiers: .command)
+
+                Button("Import Manipulator…") {
+                    store.importManipulatorFromPanel()
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+
+                Button("Export Manipulator…") {
+                    if let id = store.selectedManipulatorID {
+                        store.exportManipulator(id)
+                    }
+                }
+                .keyboardShortcut("e", modifiers: [.command, .option])
+                .disabled(store.selectedManipulatorID == nil)
+            }
+
+            // Undo/Redo in Edit menu (replaces hidden button approach)
+            CommandGroup(after: .pasteboard) {
+                Button("Undo") {
+                    store.undo()
+                }
+                .keyboardShortcut("z", modifiers: .command)
+                .disabled(!store.canUndo)
+
+                Button("Redo") {
+                    store.redo()
+                }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(!store.canRedo)
+            }
+
+            // View menu for palette and config access
+            CommandMenu("View") {
+                Toggle("Show Macro Palette", isOn: Binding(
+                    get: { store.isPaletteShown },
+                    set: { _ in store.toggleMacroPalette() }
+                ))
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+            }
+        }
 
         Settings {
-            SettingsView()
-                .onAppear {
-                    StatusBarController.shared.attach(store: store)
-                }
+            SettingsView(store: store)
+                .onAppear { StatusBarController.shared.attach(store: store) }
         }
     }
 }

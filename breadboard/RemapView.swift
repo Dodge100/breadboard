@@ -18,6 +18,7 @@ struct RemapView: View {
                 } label: {
                     Label("Add Manipulator", systemImage: "plus")
                 }
+                .help("Add a new manipulator (⌘N)")
             }
             ToolbarItem(placement: .navigation) {
                 Button {
@@ -25,52 +26,12 @@ struct RemapView: View {
                 } label: {
                     Label("Import", systemImage: "square.and.arrow.down")
                 }
-                .help("Import a manipulator from a .breadboardmanipulator file")
+                .help("Import a manipulator from a .breadboardmanipulator file (⌥⌘I)")
             }
             ToolbarItemGroup(placement: .primaryAction) {
-                // Undo/redo buttons
-                Button {
-                    store.undo()
-                } label: {
-                    Label("Undo", systemImage: "arrow.uturn.backward")
-                }
-                .disabled(!store.canUndo)
-                .help("Undo last change (⌘Z)")
-
-                Button {
-                    store.redo()
-                } label: {
-                    Label("Redo", systemImage: "arrow.uturn.forward")
-                }
-                .disabled(!store.canRedo)
-                .help("Redo last undone change (⇧⌘Z)")
-
                 ProfileSwitcherButton(store: store)
-
-                ConfigEditorButton(store: store)
-
-                Divider()
-                    .fixedSize()
-
-                Button {
-                    store.toggleMacroPalette()
-                } label: {
-                    Label("Macro Palette", systemImage: "rectangle.3.group")
-                }
-                .help("Toggle floating macro palette")
             }
         }
-        // Keyboard shortcuts for undo/redo (using SwiftUI native key commands)
-        .background(
-            HStack {
-                Button("") { store.undo() }
-                    .keyboardShortcut("z", modifiers: .command)
-                    .hidden()
-                Button("") { store.redo() }
-                    .keyboardShortcut("z", modifiers: [.command, .shift])
-                    .hidden()
-            }
-        )
     }
 }
 
@@ -104,34 +65,28 @@ private struct ManipulatorSidebar: View {
     @ViewBuilder
     private var permissionBanner: some View {
         if store.remapNeedsPermission {
-            VStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.shield.fill")
-                        .foregroundStyle(.yellow)
-                    Text("Accessibility Access Required")
-                        .font(.subheadline.bold())
-                    Spacer()
-                }
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Accessibility Access Required", systemImage: "exclamationmark.shield.fill")
+                    .font(.subheadline.weight(.medium))
                 Text("Breadboard needs Accessibility permission to intercept keyboard events.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 8) {
                     Button("Grant Permission") {
                         store.requestRemapPermissions()
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    Button("Open Settings") {
+                    Button("Open System Settings") {
                         store.openAccessibilitySettings()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(10)
-            .background(.yellow.opacity(0.08))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange.opacity(0.1))
             .overlay(alignment: .top) {
                 Divider()
             }
@@ -304,30 +259,48 @@ private struct ManipulatorRow: View {
     let manipulator: Manipulator
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
+                // Status indicator
                 if !manipulator.isEnabled {
-                    Image(systemName: "pause.circle")
+                    Image(systemName: "pause.circle.fill")
                         .foregroundStyle(.tertiary)
-                        .font(.caption)
+                        .font(.caption2)
                 }
+                
+                // Name - primary text
                 Text(manipulator.name.isEmpty ? "Untitled" : manipulator.name)
                     .font(.body)
                     .lineLimit(1)
+                
                 Spacer(minLength: 4)
-                Text(manipulator.trigger.displayLabel)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                
+                // Trigger badge - compact
+                if !manipulator.trigger.displayLabel.isEmpty {
+                    Text(manipulator.trigger.displayLabel)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 3))
+                }
             }
+            
+            // Secondary info line
             HStack(spacing: 4) {
-                Text(manipulator.notes.isEmpty ? "No description" : manipulator.notes)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if !manipulator.notes.isEmpty {
+                    Image(systemName: "text.alignleft")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text(manipulator.notes)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Spacer()
                 if !manipulator.tags.isEmpty {
-                    Text(manipulator.tags.sorted().joined(separator: " · "))
+                    Text(manipulator.tags.sorted().prefix(2).joined(separator: " · "))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)

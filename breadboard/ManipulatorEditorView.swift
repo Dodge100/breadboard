@@ -8,24 +8,31 @@ struct ManipulatorEditorView: View {
         listContent
     }
 
-    // MARK: - List Layout (existing)
+    // MARK: - List Layout
 
     private var listContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 20) {
                 headerSection
-                triggerSection
-                conditionsSection
-                actionsSection
-                additionalTriggersSection
-                parametersSection
-                notesSection
+                
+                VStack(alignment: .leading, spacing: 16) {
+                    triggerSection
+                    conditionsSection
+                    actionsSection
+                }
+                
+                VStack(alignment: .leading, spacing: 16) {
+                    additionalTriggersSection
+                    parametersSection
+                    notesSection
+                }
+                
                 deleteButton
             }
             .padding(20)
             .frame(maxWidth: 720, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
 
@@ -33,7 +40,7 @@ struct ManipulatorEditorView: View {
     // MARK: - Sections
 
     private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 TextField("Manipulator name", text: nameBinding)
                     .font(.title2.weight(.semibold))
@@ -44,13 +51,9 @@ struct ManipulatorEditorView: View {
                     .labelsHidden()
             }
             HStack {
-                TextField("Folder", text: folderBinding)
-                    .font(.body)
+                TextField("Folder (optional)", text: folderBinding)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 200)
-                Text("(optional grouping)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Spacer()
             }
             TagEditorField(store: store, manipulator: manipulator)
@@ -59,58 +62,130 @@ struct ManipulatorEditorView: View {
 
     private var triggerSection: some View {
         StepCard(title: "Trigger") {
-            VStack(alignment: .leading, spacing: 10) {
-                Picker("Type", selection: manipulatorTypeBinding) {
-                    ForEach(ManipulatorType.allCases) { type in
-                        Text(type.rawValue).tag(type)
+            VStack(alignment: .leading, spacing: 12) {
+                // Single unified trigger type selector
+                Picker("Type", selection: unifiedTriggerTypeBinding) {
+                    ForEach(UnifiedTriggerType.allCases) { type in
+                        Label(type.rawValue, systemImage: type.icon).tag(type)
                     }
                 }
                 .labelsHidden()
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
 
-                if manipulator.manipulatorType == .mouseMotionToScroll {
+                // Description for special types
+                if unifiedTriggerType == .mouseMotionToScroll {
                     Text("Converts mouse movement into scroll events. Configure speed in Parameters.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else if manipulator.manipulatorType == .mouseBasic {
-                    Text("Remaps mouse buttons. Set the trigger to a pointing button.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
-                if manipulator.manipulatorType == .basic || manipulator.manipulatorType == .mouseBasic {
+                // Trigger configuration based on type
+                if unifiedTriggerType != .mouseMotionToScroll {
                     Divider()
-
-                    Picker("Trigger type", selection: triggerTypeBinding) {
-                        ForEach(TriggerKeyType.allCases) { type in
-                            Text(type.rawValue).tag(type)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-
-                    TextField("Named trigger (optional)", text: triggerNameBinding)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
-                        .help("If set, this manipulator can be triggered by name from another manipulator's 'Execute Named Trigger' action.")
-
-                    switch manipulator.trigger.keyType {
-                    case .keyboard:
-                        keyboardTriggerEditor
-                    case .consumer:
-                        consumerTriggerEditor
-                    case .pointing:
-                        pointingTriggerEditor
-                    case .typedString:
-                        typedStringTriggerEditor
-                    case .any:
-                        Text("Matches any key press. Use conditions to narrow the context.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    triggerConfiguration
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var triggerConfiguration: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Named trigger (optional, for all types)
+            TextField("Named trigger (optional)", text: triggerNameBinding)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+                .help("If set, this manipulator can be triggered by name from another manipulator's 'Execute Named Trigger' action.")
+
+            // Type-specific trigger editor
+            switch unifiedTriggerType {
+            case .keyboard:
+                keyboardTriggerEditor
+            case .consumer:
+                consumerTriggerEditor
+            case .mouseButton:
+                pointingTriggerEditor
+            case .typedString:
+                typedStringTriggerEditor
+            case .anyKey:
+                Text("Matches any key press. Use conditions to narrow the context.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case .mouseMotionToScroll:
+                EmptyView()
+            }
+        }
+    }
+
+    // MARK: - Unified Trigger Type
+
+    private enum UnifiedTriggerType: String, CaseIterable, Identifiable {
+        case keyboard = "Keyboard Key"
+        case consumer = "Consumer Key"
+        case mouseButton = "Mouse Button"
+        case typedString = "Typed String"
+        case anyKey = "Any Key"
+        case mouseMotionToScroll = "Mouse Motion to Scroll"
+
+        var id: String { rawValue }
+
+        var icon: String {
+            switch self {
+            case .keyboard: return "keyboard"
+            case .consumer: return "play.square"
+            case .mouseButton: return "cursorarrow"
+            case .typedString: return "textformat.abc"
+            case .anyKey: return "asterisk"
+            case .mouseMotionToScroll: return "scroll"
+            }
+        }
+
+        var manipulatorType: ManipulatorType {
+            switch self {
+            case .mouseMotionToScroll: return .mouseMotionToScroll
+            case .mouseButton: return .mouseBasic
+            case .keyboard, .consumer, .typedString, .anyKey: return .basic
+            }
+        }
+
+        var keyType: TriggerKeyType {
+            switch self {
+            case .keyboard: return .keyboard
+            case .consumer: return .consumer
+            case .mouseButton: return .pointing
+            case .typedString: return .typedString
+            case .anyKey: return .any
+            case .mouseMotionToScroll: return .keyboard // not used
+            }
+        }
+    }
+
+    private var unifiedTriggerType: UnifiedTriggerType {
+        if manipulator.manipulatorType == .mouseMotionToScroll {
+            return .mouseMotionToScroll
+        }
+        // Map from existing manipulatorType + trigger.keyType
+        switch manipulator.trigger.keyType {
+        case .keyboard: return .keyboard
+        case .consumer: return .consumer
+        case .pointing: return .mouseButton
+        case .typedString: return .typedString
+        case .any: return .anyKey
+        }
+    }
+
+    private var unifiedTriggerTypeBinding: Binding<UnifiedTriggerType> {
+        Binding(
+            get: { unifiedTriggerType },
+            set: { newValue in
+                store.updateManipulator(manipulator.id) { manipulator in
+                    manipulator.manipulatorType = newValue.manipulatorType
+                    if newValue != .mouseMotionToScroll {
+                        manipulator.trigger.keyType = newValue.keyType
+                    }
+                }
+            }
+        )
     }
 
     @ViewBuilder
@@ -683,41 +758,11 @@ struct ManipulatorEditorView: View {
         )
     }
 
-    private var manipulatorTypeBinding: Binding<ManipulatorType> {
-        Binding(
-            get: { manipulator.manipulatorType },
-            set: { newValue in
-                store.updateManipulator(manipulator.id) { $0.manipulatorType = newValue
-                    if newValue == .mouseBasic {
-                        $0.trigger.keyType = .pointing
-                    }
-                }
-            }
-        )
-    }
-
     private var triggerNameBinding: Binding<String> {
         Binding(
             get: { manipulator.trigger.triggerName },
             set: { newValue in
                 store.updateManipulator(manipulator.id) { $0.trigger.triggerName = newValue }
-            }
-        )
-    }
-
-    private var triggerTypeBinding: Binding<TriggerKeyType> {
-        Binding(
-            get: { manipulator.trigger.keyType },
-            set: { newValue in
-                store.updateManipulator(manipulator.id) { manip in
-                    manip.trigger.keyType = newValue
-                    if newValue == .any { manip.trigger.anyKey = true }
-                    else { manip.trigger.anyKey = false }
-                    // Initialise string trigger options when typed-string type is selected
-                    if newValue == .typedString && manip.trigger.stringTrigger == nil {
-                        manip.trigger.stringTrigger = StringTriggerOptions()
-                    }
-                }
             }
         )
     }

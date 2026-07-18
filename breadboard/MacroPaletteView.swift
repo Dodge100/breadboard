@@ -11,7 +11,6 @@ struct MacroPaletteView: View {
 
     /// Manipulators that are enabled and have at least one configured action.
     private var paletteItems: [Manipulator] {
-        // Use debounced filtered results from the store to keep palette scrolling smooth
         let base = store.debouncedFilteredManipulators
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return base
@@ -29,9 +28,14 @@ struct MacroPaletteView: View {
         VStack(spacing: 0) {
             // Title bar area
             HStack(spacing: 8) {
+                Image(systemName: "command")
+                    .foregroundStyle(.secondary)
                 Text("Macro Palette")
                     .font(.headline)
                 Spacer()
+                Text("\(paletteItems.count) macros")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
                 Button {
                     store.hideMacroPalette()
                 } label: {
@@ -51,7 +55,7 @@ struct MacroPaletteView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.tertiary)
                     .font(.caption)
-                TextField("Search macros\u{2026}", text: $searchText)
+                TextField("Search macros…", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.body)
                 if !searchText.isEmpty {
@@ -91,7 +95,7 @@ struct MacroPaletteView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 2) {
+                    LazyVStack(spacing: 1) {
                         ForEach(paletteItems) { manipulator in
                             PaletteItemRow(store: store, manipulator: manipulator)
                         }
@@ -117,33 +121,37 @@ private struct PaletteItemRow: View {
         Button {
             store.executeManipulatorFromPalette(manipulator)
         } label: {
-            HStack(spacing: 8) {
-                // Leading bullet
-                Text("\u{2022}")
-                    .font(.title3)
-                    .foregroundStyle(.tertiary)
+            HStack(spacing: 10) {
+                // Leading icon
+                Image(systemName: manipulator.trigger.keyType.symbol)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .frame(width: 16, alignment: .center)
 
                 // Text content
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(manipulator.name.isEmpty ? "Untitled" : manipulator.name)
                         .font(.body.weight(.medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
 
                     HStack(spacing: 6) {
+                        // Trigger badge
                         Text(manipulator.trigger.displayLabel)
-                            .font(.caption)
+                            .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 3))
 
                         if let firstAction = manipulator.actions.first(where: { $0.isConfigured }) {
-                            Text("\u{2192}")
-                                .font(.caption)
+                            Image(systemName: "arrow.right")
+                                .font(.caption2)
                                 .foregroundStyle(.tertiary)
                             Text(firstAction.summary)
                                 .font(.caption)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
                     }
@@ -183,7 +191,6 @@ private struct PaletteItemRow: View {
             Button("Edit in Editor") {
                 store.selectManipulator(manipulator.id)
                 store.hideMacroPalette()
-                // Bring the main window to front
                 if let mainWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
                     mainWindow.makeKeyAndOrderFront(nil)
                     NSApp.activate(ignoringOtherApps: true)

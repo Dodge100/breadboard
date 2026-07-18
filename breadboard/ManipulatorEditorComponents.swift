@@ -11,15 +11,30 @@ struct ConditionStepRow: View {
     @State private var installedApps: [InstalledApp] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 6) {
-                Picker("Kind", selection: kindBinding) {
-                    ForEach(ConditionKind.allCases) { kind in
-                        Text(kind.rawValue).tag(kind)
+        VStack(alignment: .leading, spacing: 8) {
+            // Header row with kind selector and delete
+            HStack(alignment: .center, spacing: 8) {
+                // Kind selector with icon
+                HStack(spacing: 4) {
+                    Image(systemName: condition.kind.symbol)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14)
+                    Picker("Kind", selection: kindBinding) {
+                        ForEach(ConditionKind.allCases) { kind in
+                            HStack {
+                                Text(kind.rawValue)
+                                if kind == condition.kind {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                            .tag(kind)
+                        }
                     }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
+                
+                // Comparison operator (when applicable)
                 if condition.kind != .deviceExists && condition.kind != .expression && condition.kind != .eventChanged {
                     Picker("Op", selection: opBinding) {
                         ForEach(ComparisonOp.allCases) { op in
@@ -28,23 +43,24 @@ struct ConditionStepRow: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
-                    .frame(width: 90)
+                    .frame(width: 80)
                 }
+                
                 Spacer()
+                
+                // Delete button
                 Button(role: .destructive, action: onDelete) {
                     Image(systemName: "minus.circle")
+                        .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
+                .help("Remove condition")
             }
-            HStack {
-                Text(condition.kind.placeholder)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
+            
+            // Value field based on condition type
             if condition.kind == .variable || condition.kind == .globalVariable {
-                HStack {
+                HStack(spacing: 6) {
                     TextField("Variable name", text: targetBinding)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
@@ -69,8 +85,9 @@ struct ConditionStepRow: View {
                         }
                         onChange { $0.value = newValue }
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                     .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
             } else if condition.kind == .frontmostApp || condition.kind == .frontmostAppName {
                 HStack(spacing: 8) {
@@ -102,12 +119,18 @@ struct ConditionStepRow: View {
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
             }
+            
+            // Help text
             Text(condition.kind.helpText)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tertiary)
         }
         .padding(10)
-        .background(.background.tertiary, in: RoundedRectangle(cornerRadius: 8))
+        .background(.background, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(.separator.opacity(0.5), lineWidth: 1)
+        )
     }
 
     private func loadInstalledApps() {
@@ -197,31 +220,48 @@ struct ActionStepRow: View {
     @State private var isExpanded = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 0) {
             header
             if isExpanded {
-                actionEditor
-                actionModifiersSection
-                fireModeSection
-                actionConditionsSection
+                VStack(alignment: .leading, spacing: 8) {
+                    Divider()
+                    actionEditor
+                    actionModifiersSection
+                    fireModeSection
+                    actionConditionsSection
+                }
+                .padding(.top, 8)
             }
         }
-        .padding(8)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 6))
+        .padding(10)
+        .background(.background, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(.separator.opacity(0.5), lineWidth: 1)
+        )
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 6) {
+        HStack(alignment: .center, spacing: 8) {
+            // Kind selector with chevron to indicate it's a menu
             Menu {
                 ForEach(ActionKind.allCases) { kind in
                     Button {
                         onChange { $0.kind = kind }
                     } label: {
-                        Text(kind.rawValue)
+                        HStack {
+                            Text(kind.rawValue)
+                            if kind == action.kind {
+                                Image(systemName: "checkmark")
+                            }
+                        }
                     }
                 }
             } label: {
                 HStack(spacing: 4) {
+                    Image(systemName: action.kind.symbol)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16)
                     Text(action.kind.rawValue)
                         .font(.body.weight(.medium))
                     Image(systemName: "chevron.up.chevron.down")
@@ -231,24 +271,37 @@ struct ActionStepRow: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+
+            // Summary as secondary text
             Text(action.summary)
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
+
             Spacer()
-            Button {
-                isExpanded.toggle()
-            } label: {
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .foregroundStyle(.tertiary)
+
+            // Expand/collapse and delete
+            HStack(spacing: 4) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help(isExpanded ? "Collapse" : "Expand")
+
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "minus.circle")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Remove action")
             }
-            .buttonStyle(.borderless)
-            .help(isExpanded ? "Collapse" : "Expand")
-            Button(role: .destructive, action: onDelete) {
-                Image(systemName: "minus.circle")
-                    .foregroundStyle(.tertiary)
-            }
-            .buttonStyle(.borderless)
         }
     }
 
@@ -799,41 +852,60 @@ private struct SendKeyEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Send combo")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                KeyComboCaptureField(
-                    modifiers: action.toModifiers,
-                    key: action.toKey,
-                    isCapturing: store.isCapturingToKey,
-                    onStart: { store.startSendKeyCapture(for: action.id) },
-                    onCancel: { store.stopToKeyCapture() }
-                )
-                if !action.toKey.isEmpty {
-                    Button {
-                        onChange { action in
-                            action.toKey = ""
-                            action.toModifiers = []
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Key to send")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    KeyComboCaptureField(
+                        modifiers: action.toModifiers,
+                        key: action.toKey,
+                        isCapturing: store.isCapturingToKey,
+                        onStart: { store.startSendKeyCapture(for: action.id) },
+                        onCancel: { store.stopToKeyCapture() }
+                    )
+                    if !action.toKey.isEmpty {
+                        Button {
+                            onChange { action in
+                                action.toKey = ""
+                                action.toModifiers = []
+                            }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
                         }
-                    } label: {
-                        Text("Clear").font(.caption)
+                        .buttonStyle(.plain)
+                        .help("Clear key")
                     }
-                    .buttonStyle(.borderless)
-                    .help("Clear combo")
+                }
+                HStack(spacing: 4) {
+                    Text("Modifiers")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    ForEach(ModifierKey.flagBased, id: \.self) { mod in
+                        Button {
+                            var newSet = action.toModifiers
+                            if newSet.contains(mod) {
+                                newSet.remove(mod)
+                            } else {
+                                newSet.insert(mod)
+                            }
+                            onChange { $0.toModifiers = newSet }
+                        } label: {
+                            Text(mod.symbol)
+                                .font(.caption)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(action.toModifiers.contains(mod) ? Color.accentColor.opacity(0.2) : Color.gray.opacity(0.1))
+                                .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
-            HStack(spacing: 8) {
-                Text("Modifiers:")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                modifierChips(for: action.toModifiers) { newSet in
-                    onChange { $0.toModifiers = newSet }
-                }
-            }
-            Text("Click the field and press the key combo you want to send.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
         }
     }
 

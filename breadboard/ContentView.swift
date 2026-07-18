@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Navigation Modes (PearCleaner-style)
+// MARK: - Navigation Modes
 
 enum AppMode: String, CaseIterable, Identifiable {
     case remaps = "Keyboard Remaps"
@@ -35,7 +35,6 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .toolbar {
-            // PearCleaner-style mode switcher: segmented control in the toolbar
             ToolbarItem(placement: .navigation) {
                 Picker("Mode", selection: $selectedMode) {
                     ForEach(AppMode.allCases) { mode in
