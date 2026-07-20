@@ -1206,9 +1206,9 @@ struct Action: Identifiable, Equatable, Codable {
 
     private mutating func copyIfNeeded() {
         if !isKnownUniquelyReferenced(&_storage) {
+            let old = _storage
             _storage = ActionStorage()
             // Copy all properties
-            let old = _storage
             _storage.id = old.id
             _storage.kind = old.kind
             _storage.fireMode = old.fireMode
@@ -1787,7 +1787,7 @@ struct Manipulator: Identifiable, Equatable, Codable {
     var manipulatorType: ManipulatorType = .basic
     var trigger: ManipulatorTrigger = .init()
     var conditions: [Condition] = []
-    var actions: [Action] = [Action()]
+    var actions: [Action] = []
     var parameters: ManipulatorParameters = .init()
     var additionalTriggers: [AdditionalTrigger] = []
 
@@ -1817,7 +1817,7 @@ struct Manipulator: Identifiable, Equatable, Codable {
         manipulatorType = try container.decodeIfPresent(ManipulatorType.self, forKey: .manipulatorType) ?? .basic
         trigger = try container.decodeIfPresent(ManipulatorTrigger.self, forKey: .trigger) ?? .init()
         conditions = try container.decodeIfPresent([Condition].self, forKey: .conditions) ?? []
-        actions = try container.decodeIfPresent([Action].self, forKey: .actions) ?? [Action()]
+        actions = try container.decodeIfPresent([Action].self, forKey: .actions) ?? []
         parameters = try container.decodeIfPresent(ManipulatorParameters.self, forKey: .parameters) ?? .init()
         additionalTriggers = try container.decodeIfPresent([AdditionalTrigger].self, forKey: .additionalTriggers) ?? []
     }

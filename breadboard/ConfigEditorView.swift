@@ -22,15 +22,15 @@ struct ConfigEditorView: View {
         VStack(spacing: 0) {
             // ── Toolbar ──────────────────────────────────────────────
             HStack(spacing: 8) {
-                Label("config.json", systemImage: "doc.text")
+                Text("config.json")
                     .font(.headline)
                 Spacer()
 
-                // Reload from disk (reverts unsaved changes)
+                // Reload from disk
                 Button {
                     loadConfig()
                 } label: {
-                    Label("Reload", systemImage: "arrow.clockwise")
+                    Text("Reload")
                 }
                 .help("Reload config.json from disk (discards unsaved changes)")
 
@@ -38,7 +38,7 @@ struct ConfigEditorView: View {
                 Button {
                     formatJSON()
                 } label: {
-                    Label("Format", systemImage: "curlybraces")
+                    Text("Format")
                 }
                 .help("Pretty-print JSON")
 
@@ -49,10 +49,9 @@ struct ConfigEditorView: View {
                 Button {
                     saveConfig()
                 } label: {
-                    Label("Save", systemImage: "square.and.arrow.down")
+                    Text("Save")
                 }
                 .disabled(!isDirty && validationError == nil)
-                .buttonStyle(.borderedProminent)
 
                 // Close
                 Button {
@@ -77,38 +76,22 @@ struct ConfigEditorView: View {
             // ── Status Bar ───────────────────────────────────────────
             HStack(spacing: 8) {
                 if let error = validationError {
-                    HStack(spacing: 4) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .lineLimit(1)
-                    }
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
                 } else if isDirty {
-                    HStack(spacing: 4) {
-                        Image(systemName: "pencil.circle")
-                            .foregroundStyle(.orange)
-                        Text("Unsaved changes")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
+                    Text("Unsaved changes")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 } else if let saved = lastSaved {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.circle")
-                            .foregroundStyle(.green)
-                        Text("Saved \(saved.formatted(date: .omitted, time: .standard))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("Saved \(saved.formatted(date: .omitted, time: .standard))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 } else {
-                    HStack(spacing: 4) {
-                        Image(systemName: "doc.text")
-                            .foregroundStyle(.secondary)
-                        Text("Loaded from disk")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("Loaded from disk")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Spacer()
@@ -372,9 +355,8 @@ struct ConfigEditorButton: View {
         Button {
             showEditor = true
         } label: {
-            Label("Edit config.json", systemImage: "curlybraces")
+            Text("Edit config.json")
         }
-        .help("Directly edit the config.json file")
         .sheet(isPresented: $showEditor) {
             ConfigEditorView(store: store)
         }

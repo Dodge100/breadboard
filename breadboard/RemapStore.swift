@@ -47,6 +47,11 @@ final class RemapStore: ObservableObject {
         if undoStack.last != snapshot {
             undoStack.append(snapshot)
         }
+        // Cap undo stack to prevent unbounded memory growth
+        let maxUndoDepth = 200
+        if undoStack.count > maxUndoDepth {
+            undoStack.removeFirst(undoStack.count - maxUndoDepth)
+        }
         // New action invalidates redo
         redoStack.removeAll()
         canUndo = !undoStack.isEmpty
@@ -136,6 +141,8 @@ final class RemapStore: ObservableObject {
     private var toKeyMonitor: Any?
     private var configFileSource: DispatchSourceFileSystemObject?
     private var saveConfigTask: Task<Void, Never>?
+    private var applyRemapsTask: Task<Void, Never>?
+    private var saveMenuBarItemsTask: Task<Void, Never>?
 
     static let appSupportURL: URL = {
         let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -227,13 +234,15 @@ final class RemapStore: ObservableObject {
         // Initialize debounced filter with the full list
         debouncedFilteredManipulators = computeFilteredManipulators()
 
-        // Debounce search + tag filter changes to avoid filtering on every keystroke.
-        // Must come after full init so `self` is available in the sink closure.
-        searchCancellable = Publishers.CombineLatest(
+        // Recompute filtered list when search, tags, OR manipulators change.
+        // Manipulators changes (e.g. profile switch) use a short debounce so the
+        // sidebar updates nearly instantly while search still feels smooth.
+        searchCancellable = Publishers.CombineLatest3(
             $searchText.debounce(for: .milliseconds(150), scheduler: DispatchQueue.main),
-            $selectedTags
+            $selectedTags,
+            $manipulators.debounce(for: .milliseconds(30), scheduler: DispatchQueue.main)
         )
-        .sink { [weak self] _, _ in
+        .sink { [weak self] _, _, _ in
             guard let self else { return }
             self.debouncedFilteredManipulators = self.computeFilteredManipulators()
         }
@@ -251,6 +260,8 @@ final class RemapStore: ObservableObject {
         }
         searchCancellable?.cancel()
         saveConfigTask?.cancel()
+        applyRemapsTask?.cancel()
+        saveMenuBarItemsTask?.cancel()
         // Cancel dispatch source synchronously in deinit
         configFileSource?.cancel()
         configFileSource = nil
@@ -395,6 +406,26 @@ final class RemapStore: ObservableObject {
         guard let index = manipulators.firstIndex(where: { $0.id == id }) else { return }
         pushUndo()
         transform(&manipulators[index])
+        scheduleApplyRemaps()
+    }
+
+    /// Update a manipulator without scheduling an engine rebuild.
+    /// Use for cosmetic-only edits (name, notes, folder) where routing is unaffected.
+    func updateManipulatorCosmetic(_ id: UUID, _ transform: (inout Manipulator) -> Void) {
+        guard let index = manipulators.firstIndex(where: { $0.id == id }) else { return }
+        pushUndo()
+        transform(&manipulators[index])
+        // Bump objectWillChange so SwiftUI re-renders, but skip the expensive
+        // routing rebuild + disk write entirely.
+        objectWillChange.send()
+    }
+
+    /// Update a manipulator and immediately apply routing (no debounce).
+    /// Use when the routing result must be visible instantly (e.g. undo/redo).
+    func updateManipulatorImmediate(_ id: UUID, _ transform: (inout Manipulator) -> Void) {
+        guard let index = manipulators.firstIndex(where: { $0.id == id }) else { return }
+        pushUndo()
+        transform(&manipulators[index])
         applyRemaps()
     }
 
@@ -436,9 +467,6 @@ final class RemapStore: ObservableObject {
         pushUndo()
         updateManipulator(manipulatorID) { manipulator in
             manipulator.actions.removeAll { $0.id == actionID }
-            if manipulator.actions.isEmpty {
-                manipulator.actions.append(Action())
-            }
         }
     }
 
@@ -479,7 +507,7 @@ final class RemapStore: ObservableObject {
         let item = MenuBarItem(name: "New Menu Item")
         menuBarItems.append(item)
         selectedMenuBarItemID = item.id
-        saveMenuBarItems()
+        saveMenuBarItemsImmediate()
     }
 
     func duplicateMenuBarItem(_ id: UUID) {
@@ -490,7 +518,7 @@ final class RemapStore: ObservableObject {
         copy.name = source.name + " Copy"
         menuBarItems.insert(copy, at: index + 1)
         selectedMenuBarItemID = copy.id
-        saveMenuBarItems()
+        saveMenuBarItemsImmediate()
     }
 
     func deleteMenuBarItem(_ id: UUID) {
@@ -500,13 +528,13 @@ final class RemapStore: ObservableObject {
             selectedMenuBarItemID = next.map { menuBarItems[$0].id }
         }
         menuBarItems.remove(at: index)
-        saveMenuBarItems()
+        saveMenuBarItemsImmediate()
     }
 
     func updateMenuBarItem(_ id: UUID, _ transform: (inout MenuBarItem) -> Void) {
         guard let index = menuBarItems.firstIndex(where: { $0.id == id }) else { return }
         transform(&menuBarItems[index])
-        saveMenuBarItems()
+        scheduleSaveMenuBarItems()
     }
 
     func updateSelectedMenuBarItem(_ transform: (inout MenuBarItem) -> Void) {
@@ -517,39 +545,44 @@ final class RemapStore: ObservableObject {
     func addMenuBarChildItem(to parentID: UUID) {
         guard let index = menuBarItems.firstIndex(where: { $0.id == parentID }) else { return }
         let child = MenuBarItem(name: "Sub Item")
+        objectWillChange.send()
         menuBarItems[index].children.append(child)
-        saveMenuBarItems()
+        saveMenuBarItemsImmediate()
     }
 
     func updateMenuBarChildItem(_ childID: UUID, in parentID: UUID, _ transform: (inout MenuBarItem) -> Void) {
         guard let parentIndex = menuBarItems.firstIndex(where: { $0.id == parentID }) else { return }
         guard let childIndex = menuBarItems[parentIndex].children.firstIndex(where: { $0.id == childID }) else { return }
+        objectWillChange.send()
         transform(&menuBarItems[parentIndex].children[childIndex])
-        saveMenuBarItems()
+        scheduleSaveMenuBarItems()
     }
 
     func removeMenuBarSubItem(parentID: UUID, at indexSet: IndexSet) {
         guard let parentIndex = menuBarItems.firstIndex(where: { $0.id == parentID }) else { return }
+        objectWillChange.send()
         for index in indexSet.sorted(by: >) {
             guard menuBarItems[parentIndex].children.indices.contains(index) else { continue }
             menuBarItems[parentIndex].children.remove(at: index)
         }
-        saveMenuBarItems()
+        saveMenuBarItemsImmediate()
     }
 
     func deleteMenuBarChildItem(_ childID: UUID, from parentID: UUID) {
         guard let parentIndex = menuBarItems.firstIndex(where: { $0.id == parentID }) else { return }
+        objectWillChange.send()
         menuBarItems[parentIndex].children.removeAll { $0.id == childID }
-        saveMenuBarItems()
+        saveMenuBarItemsImmediate()
     }
 
     func moveMenuBarItem(from source: IndexSet, to destination: Int) {
         menuBarItems.move(fromOffsets: source, toOffset: destination)
-        saveMenuBarItems()
+        saveMenuBarItemsImmediate()
     }
 
     func toggleMenuBarItemSeparator(_ id: UUID) {
         guard let index = menuBarItems.firstIndex(where: { $0.id == id }) else { return }
+        objectWillChange.send()
         menuBarItems[index].isSeparator.toggle()
         if menuBarItems[index].isSeparator {
             menuBarItems[index].name = "Separator"
@@ -557,13 +590,14 @@ final class RemapStore: ObservableObject {
             menuBarItems[index].rightClickAction = nil
             menuBarItems[index].children = []
         }
-        saveMenuBarItems()
+        saveMenuBarItemsImmediate()
     }
 
     func toggleMenuBarItemEnabled(_ id: UUID) {
         guard let index = menuBarItems.firstIndex(where: { $0.id == id }) else { return }
+        objectWillChange.send()
         menuBarItems[index].isEnabled.toggle()
-        saveMenuBarItems()
+        saveMenuBarItemsImmediate()
     }
 
     // MARK: - Menu Bar Action Execution
@@ -860,6 +894,27 @@ final class RemapStore: ObservableObject {
         }
     }
 
+    /// Debounced apply for routing rebuilds. Batches rapid mutations (e.g. keystrokes)
+    /// so the expensive engine rebuild only runs once after edits settle.
+    private func scheduleApplyRemaps() {
+        applyRemapsTask?.cancel()
+        applyRemapsTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 80_000_000) // 80ms debounce
+            guard let self, !Task.isCancelled else { return }
+            self.applyRemaps()
+        }
+    }
+
+    /// Debounced save for menu bar items. Avoids disk I/O on every keystroke.
+    private func scheduleSaveMenuBarItems() {
+        saveMenuBarItemsTask?.cancel()
+        saveMenuBarItemsTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms debounce
+            guard let self, !Task.isCancelled else { return }
+            self.saveMenuBarItems()
+        }
+    }
+
     static func loadConfig() -> [Manipulator]? {
         guard let data = try? Data(contentsOf: configURL) else { return nil }
         return try? JSONDecoder().decode([Manipulator].self, from: data)
@@ -886,6 +941,11 @@ final class RemapStore: ObservableObject {
     }
 
     func saveMenuBarItems() {
+        scheduleSaveMenuBarItems()
+    }
+
+    /// Immediately persist menu bar items to disk (for structural changes).
+    private func saveMenuBarItemsImmediate() {
         let config = MenuBarItemsConfig(items: menuBarItems)
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
@@ -1143,17 +1203,62 @@ final class RemapStore: ObservableObject {
             .toggleHiddenFiles, .logOut, .restartSystem, .shutdownSystem
         ]
         if blockingKinds.contains(action.kind) {
-            // Capture only Sendable values; proxy is never used by blocking actions
+            // Dispatch blocking actions to a background queue so the event-tap
+            // callback (which runs on the main run loop) is never stalled.
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let self else { return }
-                // Re-dispatch onto MainActor for AppKit calls
-                MainActor.assumeIsolated {
-                    self.executeActionImpl(action, of: manipulator, proxy: nil)
-                }
+                // Perform the blocking work (shell, AppleScript, etc.) on background
+                self.executeBlockingAction(action, of: manipulator, proxy: nil)
             }
             return
         }
         self.executeActionImpl(action, of: manipulator, proxy: proxy)
+    }
+
+    /// Execute blocking action kinds on a background thread.
+    /// Only the blocking I/O is performed here; UI-touching operations
+    /// are dispatched back to the main actor.
+    private func executeBlockingAction(_ action: Action, of manipulator: Manipulator, proxy: CGEventTapProxy?) {
+        switch action.kind {
+        case .runShell:
+            if !action.shellCommand.isEmpty {
+                _ = runShell(action.shellCommand)
+            }
+        case .runAppleScript:
+            if !action.scriptBody.isEmpty {
+                _ = Self.runAppleScript(action.scriptBody)
+            }
+        case .sendUserCommand:
+            if !action.userCommand.isEmpty {
+                _ = runShell(action.userCommand)
+            }
+        case .runShortcut:
+            if !action.shortcutName.isEmpty {
+                _ = ShortcutsService.runShortcut(named: action.shortcutName)
+            }
+        case .openApp:
+            openApp(bundleID: action.appBundleID, name: action.appName)
+        case .openURL:
+            if let url = URL(string: action.urlString) {
+                NSWorkspace.shared.open(url)
+            }
+        case .getBatteryState:
+            let output = runShell("pmset -g batt")
+            if let match = output.range(of: #"\d+%"#, options: .regularExpression) {
+                engine.setVariable(name: "batteryLevel", value: String(output[match].dropLast()))
+            }
+            engine.setVariable(name: "batteryCharging", value: output.contains("AC Power") ? "true" : "false")
+            Task { @MainActor [weak self] in self?.objectWillChange.send() }
+        case .getIPAddress:
+            let ip = runShell("ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1").trimmingCharacters(in: .whitespacesAndNewlines)
+            engine.setVariable(name: "ipAddress", value: ip)
+            Task { @MainActor [weak self] in self?.objectWillChange.send() }
+        default:
+            // For other blocking kinds, fall back to main-thread execution
+            Task { @MainActor [weak self] in
+                self?.executeActionImpl(action, of: manipulator, proxy: proxy)
+            }
+        }
     }
 
     fileprivate func executeActionImpl(_ action: Action, of manipulator: Manipulator, proxy: CGEventTapProxy?) {
@@ -1451,12 +1556,15 @@ final class RemapStore: ObservableObject {
         
         // Get the selected text range
         var selectedRange: CFTypeRef?
-        let rangeResult = AXUIElementCopyAttributeValue(element as! AXUIElement, kAXSelectedTextRangeAttribute as CFString, &selectedRange)
+        guard let element = focusedElement else { return nil }
+        let axElement: AXUIElement = unsafeBitCast(element, to: AXUIElement.self)
+        let rangeResult = AXUIElementCopyAttributeValue(axElement, kAXSelectedTextRangeAttribute as CFString, &selectedRange)
         guard rangeResult == .success, let rangeValue = selectedRange else { return nil }
         
         // Extract the selected range
         var startIndex: CFIndex = 0
-        AXValueGetValue(rangeValue as! AXValue, .cfRange, &startIndex)
+        let axRangeValue: AXValue = unsafeBitCast(rangeValue, to: AXValue.self)
+        AXValueGetValue(axRangeValue, .cfRange, &startIndex)
         
         // For now, use the clipboard approach as fallback
         // Copy selection to pasteboard, read it, then restore
@@ -1516,7 +1624,7 @@ final class RemapStore: ObservableObject {
         guard AXUIElementCopyAttributeValue(appElement, "AXFocusedWindow" as CFString, &windowRef) == .success
                 || AXUIElementCopyAttributeValue(appElement, kAXMainWindowAttribute as CFString, &windowRef) == .success,
               let windowValue = windowRef else { return }
-        let window = windowValue as! AXUIElement
+        let window: AXUIElement = unsafeBitCast(windowValue, to: AXUIElement.self)
 
         switch kind {
         case .minimize:
@@ -1524,8 +1632,9 @@ final class RemapStore: ObservableObject {
             return
         case .close:
             var button: CFTypeRef?
-            if AXUIElementCopyAttributeValue(window, "AXCloseButton" as CFString, &button) == .success, let button {
-                AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString)
+            if AXUIElementCopyAttributeValue(window, "AXCloseButton" as CFString, &button) == .success, let buttonVal = button {
+                let closeButton: AXUIElement = unsafeBitCast(buttonVal, to: AXUIElement.self)
+                AXUIElementPerformAction(closeButton, kAXPressAction as CFString)
             }
             return
         default:
@@ -1572,7 +1681,8 @@ final class RemapStore: ObservableObject {
         guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionRef) == .success,
               let positionValue = positionRef else { return nil }
         var point = CGPoint.zero
-        AXValueGetValue(positionValue as! AXValue, .cgPoint, &point)
+        let axValue: AXValue = unsafeBitCast(positionValue, to: AXValue.self)
+        AXValueGetValue(axValue, .cgPoint, &point)
         // Convert AX top-left origin point to AppKit bottom-left origin.
         let globalHeight = NSScreen.screens.map(\.frame.maxY).max() ?? 0
         let appKitPoint = NSPoint(x: point.x, y: globalHeight - point.y)
@@ -1637,24 +1747,27 @@ final class RemapStore: ObservableObject {
     /// Flash the screen with a brief translucent overlay, then fade it out.
     private func flashScreen() {
         guard let screen = NSScreen.main else { return }
-        let window = NSWindow(
+        let flashWindow = NSWindow(
             contentRect: screen.frame,
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
-        window.level = .screenSaver
-        window.backgroundColor = .white
-        window.alphaValue = 0.7
-        window.ignoresMouseEvents = true
-        window.collectionBehavior = [.canJoinAllSpaces, .transient]
-        window.orderFrontRegardless()
+        flashWindow.level = .screenSaver
+        flashWindow.backgroundColor = .white
+        flashWindow.alphaValue = 0.7
+        flashWindow.ignoresMouseEvents = true
+        flashWindow.collectionBehavior = [.canJoinAllSpaces, .transient]
+        flashWindow.orderFrontRegardless()
 
+        // Retain the window for the duration of the animation.
+        let retainedWindow: NSWindow? = flashWindow
+        _ = retainedWindow
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.35
-            window.animator().alphaValue = 0
+            flashWindow.animator().alphaValue = 0
         }, completionHandler: {
-            window.orderOut(nil)
+            flashWindow.orderOut(nil)
         })
     }
 
@@ -1745,12 +1858,14 @@ final class RemapStore: ObservableObject {
 
     // MARK: - Posting events
 
+    /// Cached regex for variable token expansion: {variable_name}
+    private static let variableTokenRegex = try! NSRegularExpression(pattern: "\\{([^}]+)\\}", options: [])
+
     /// Expand {variable_name} tokens in text using a regex-based approach
     /// that avoids O(n²) character-by-character scanning for long strings.
     func expandVariableTokens(in text: String) -> String {
         guard text.contains("{") else { return text }
-        // Regex matches {name} where name is alphanumeric/underscore/hyphen
-        guard let regex = try? NSRegularExpression(pattern: "\\{([^}]+)\\}", options: []) else { return text }
+        let regex = Self.variableTokenRegex
         let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
         var result = text
         var offset = 0

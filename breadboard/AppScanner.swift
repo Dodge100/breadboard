@@ -6,7 +6,17 @@ struct InstalledApp: Identifiable, Equatable {
     let bundleID: String
     let url: URL
 
+    /// Cached installed apps to avoid repeated filesystem enumeration.
+    private static var cachedApps: [InstalledApp]?
+    private static var cacheTime: Date = .distantPast
+    private static let cacheTTL: TimeInterval = 60.0
+
     static func allInstalledApps() -> [InstalledApp] {
+        let now = Date()
+        if let cached = cachedApps, now.timeIntervalSince(cacheTime) < cacheTTL {
+            return cached
+        }
+
         let directories: [URL] = [
             URL(fileURLWithPath: "/Applications"),
             URL(fileURLWithPath: "/System/Applications"),
@@ -40,6 +50,9 @@ struct InstalledApp: Identifiable, Equatable {
             }
         }
 
-        return apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let sorted = apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        cachedApps = sorted
+        cacheTime = now
+        return sorted
     }
 }

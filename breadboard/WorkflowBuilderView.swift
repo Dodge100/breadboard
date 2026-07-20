@@ -223,7 +223,7 @@ private struct WorkflowTriggerNode: View {
             Spacer()
 
             if !trigger.triggerName.isEmpty {
-                Label(trigger.triggerName, systemImage: "tag")
+                Text(trigger.triggerName)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6)

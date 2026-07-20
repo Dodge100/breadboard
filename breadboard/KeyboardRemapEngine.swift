@@ -332,7 +332,11 @@ final class KeyboardRemapEngine {
     private var cachedFrontmostApp: NSRunningApplication?
     private var inputSourceObserver: NSObjectProtocol?
     private var frontmostAppObserver: NSObjectProtocol?
-    private var keyboardChangeObserver: NSObjectProtocol?
+
+    /// Cache for running app lookups: lowered bundle ID/name → true
+    private var cachedRunningApps: Set<String> = []
+    private var runningAppsCacheTime: Date = .distantPast
+    private let runningAppsCacheTTL: TimeInterval = 2.0
 
     /// Cache for pixel color conditions: key="x,y" → (colorHex, timestamp)
     private var pixelColorCache: [String: (String, Date)] = [:]
@@ -360,6 +364,17 @@ final class KeyboardRemapEngine {
     ]
     // .window, .token, .pixelCondition are expensive (AXUI / ScreenCaptureKit)
 
+    // Cached DateFormatters to avoid allocating one per token resolution call.
+    private static let isoDateFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
+    }()
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
+    }()
+    private static let dateTimeFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"; return f
+    }()
+
     private func setupObservers() {
         // Invalidate input source cache when it changes
         inputSourceObserver = NotificationCenter.default.addObserver(
@@ -375,22 +390,16 @@ final class KeyboardRemapEngine {
         ) { [weak self] notification in
             self?.cachedFrontmostApp = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
         }
-        // Also invalidate on keyboard input source changes via distributed notifications
-        keyboardChangeObserver = NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("NSTextInputContextKeyboardSelectionDidChangeNotification"),
-            object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.cachedInputSourceID = nil
-        }
+        // NOTE: The distributed notification "NSTextInputContextKeyboardSelectionDidChangeNotification"
+        // was previously registered here as a duplicate of the system notification above.
+        // Removed to avoid redundant cache invalidation.
     }
 
     private func removeObservers() {
         if let obs = inputSourceObserver { NotificationCenter.default.removeObserver(obs) }
         if let obs = frontmostAppObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs) }
-        if let obs = keyboardChangeObserver { NotificationCenter.default.removeObserver(obs) }
         inputSourceObserver = nil
         frontmostAppObserver = nil
-        keyboardChangeObserver = nil
     }
 
     // Cache a single Date() at the start of handle() to avoid multiple allocations per event.
@@ -577,11 +586,15 @@ final class KeyboardRemapEngine {
             .keyDown, .keyUp, .flagsChanged,
             .leftMouseDown, .leftMouseUp,
             .rightMouseDown, .rightMouseUp,
-            .otherMouseDown, .otherMouseUp,
-            .scrollWheel
+            .otherMouseDown, .otherMouseUp
         ]
         if routing.needsMouseMoved {
             eventTypes.append(.mouseMoved)
+        }
+        // Register for system-defined events (consumer/media keys: volume, brightness, etc.)
+        // These arrive as CGEventType 14 (NX_SYSDEFINED), not .flagsChanged.
+        if let sysDefined = CGEventType(rawValue: 14) {
+            eventTypes.append(sysDefined)
         }
         let events = eventTypes.reduce(CGEventMask(0)) { mask, type in
             mask | (1 << type.rawValue)
@@ -663,13 +676,23 @@ final class KeyboardRemapEngine {
         case .leftMouseUp, .rightMouseUp, .otherMouseUp:
             return handleMouseUp(type: type, event: event)
 
-        case .scrollWheel:
-            return handleScrollWheel(event: event, proxy: proxy)
-
         case .mouseMoved:
             return handleMouseMotionToScroll(event: event, proxy: proxy)
 
         default:
+            // System-defined events (consumer/media keys like volume, brightness)
+            // arrive as CGEventType(rawValue: 14) with NSEvent subtype 8.
+            if let nsEvent = cachedNSEvent,
+               nsEvent.type == .systemDefined,
+               nsEvent.subtype.rawValue == 8 {
+                let nxKeyType = Int32((nsEvent.data1 >> 16) & 0xFFFF)
+                if let consumerKeyID = consumerKeyIDForNXKeyType(nxKeyType) {
+                    if let result = dispatchConsumerKeyDown(consumerKeyID: consumerKeyID, event: event) {
+                        return result
+                    }
+                    return nil
+                }
+            }
             // Reset timeout backoff on any successful event processing
             tapTimeoutCount = 0
             return Unmanaged.passUnretained(event)
@@ -1079,6 +1102,10 @@ final class KeyboardRemapEngine {
                                 stringInputBuffer[manipulator.id] = trimmed
                                 resetStringTriggerTimer(for: manipulator.id, timeout: stringTrigger.timeoutSeconds)
                             }
+                        } else if buffer.count < target.count && target.hasPrefix(buffer) {
+                            // Buffer is a prefix of the target — keep accumulating
+                            stringInputBuffer[manipulator.id] = buffer
+                            resetStringTriggerTimer(for: manipulator.id, timeout: stringTrigger.timeoutSeconds)
                         } else {
                             resetStringBuffer(for: manipulator.id)
                         }
@@ -1117,11 +1144,20 @@ final class KeyboardRemapEngine {
     private func trimmingSuffixToMatch(_ buffer: String, target: String) -> String {
         guard !buffer.isEmpty, !target.isEmpty else { return "" }
         let bufChars = Array(buffer)
-        // Try increasingly short suffixes from longest to shortest
+        let targetChars = Array(target)
+        // Try increasingly short suffixes from longest to shortest.
+        // Use Character array comparison to avoid O(n) String allocations per iteration.
         for start in bufChars.indices {
-            let suffix = String(bufChars[start...])
-            if target.hasPrefix(suffix) {
-                return suffix
+            let suffixLen = bufChars.count - start
+            if suffixLen > targetChars.count { continue }
+            // Check if target starts with this suffix
+            let suffix = bufChars[start...]
+            var matches = true
+            for (i, ch) in suffix.enumerated() {
+                if targetChars[i] != ch { matches = false; break }
+            }
+            if matches {
+                return String(suffix)
             }
         }
         return ""
@@ -1214,10 +1250,6 @@ final class KeyboardRemapEngine {
         for id in activePresses.keys.filter({ activePresses[$0]?.keyID == buttonID }) {
             resolvePress(manipulatorID: id, with: .released)
         }
-        return Unmanaged.passUnretained(event)
-    }
-
-    private func handleScrollWheel(event: CGEvent, proxy: CGEventTapProxy?) -> Unmanaged<CGEvent> {
         return Unmanaged.passUnretained(event)
     }
 
@@ -1621,24 +1653,29 @@ final class KeyboardRemapEngine {
     // MARK: - Conditions
 
     /// Evaluate all conditions with short-circuit ordering: cheap → medium → expensive.
+    /// Single-pass: conditions are bucketed by tier and evaluated in priority order.
     /// Results are cached per event cycle to avoid redundant evaluation across routing passes.
     private func allConditionsMet(_ conditions: [Condition]) -> Bool {
-        // Short-circuit: check cheap conditions first, expensive ones last
-        // This avoids hitting AX/ScreenCapture APIs when a cheap condition already fails.
-        
-        // Tier 1: Cheap conditions (in-memory lookups, no IPC)
-        for condition in conditions where Self.cheapConditionKinds.contains(condition.kind) {
-            if !evaluateConditionCached(condition) { return false }
+        // Partition into three tiers in a single pass
+        var cheap: [Condition] = []
+        var medium: [Condition] = []
+        var expensive: [Condition] = []
+        cheap.reserveCapacity(conditions.count)
+        medium.reserveCapacity(conditions.count)
+        expensive.reserveCapacity(conditions.count)
+        for condition in conditions {
+            if Self.cheapConditionKinds.contains(condition.kind) {
+                cheap.append(condition)
+            } else if Self.mediumConditionKinds.contains(condition.kind) {
+                medium.append(condition)
+            } else {
+                expensive.append(condition)
+            }
         }
-        // Tier 2: Medium conditions (process-local, moderate cost)
-        for condition in conditions where Self.mediumConditionKinds.contains(condition.kind) {
-            if !evaluateConditionCached(condition) { return false }
-        }
-        // Tier 3: Expensive conditions (AXUI API, ScreenCaptureKit, etc.)
-        for condition in conditions where !Self.cheapConditionKinds.contains(condition.kind)
-            && !Self.mediumConditionKinds.contains(condition.kind) {
-            if !evaluateConditionCached(condition) { return false }
-        }
+        // Evaluate tiers in priority order with short-circuit
+        for condition in cheap where !evaluateConditionCached(condition) { return false }
+        for condition in medium where !evaluateConditionCached(condition) { return false }
+        for condition in expensive where !evaluateConditionCached(condition) { return false }
         return true
     }
 
@@ -1764,19 +1801,18 @@ final class KeyboardRemapEngine {
 
 
     private func evaluateExpression(_ expression: String) -> Bool {
-        let parts = expression.components(separatedBy: "==")
-        if parts.count == 2 {
-            let varName = parts[0].trimmingCharacters(in: .whitespaces)
-            let expected = parts[1].trimmingCharacters(in: .whitespaces)
-                .replacingOccurrences(of: "\"", with: "")
-            return variables[varName] == expected
-        }
-        let notParts = expression.components(separatedBy: "!=")
-        if notParts.count == 2 {
-            let varName = notParts[0].trimmingCharacters(in: .whitespaces)
-            let expected = notParts[1].trimmingCharacters(in: .whitespaces)
+        // Try != first (longer operator, must check before ==)
+        if let notRange = expression.range(of: "!=") {
+            let varName = String(expression[expression.startIndex..<notRange.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let expected = String(expression[notRange.upperBound..<expression.endIndex]).trimmingCharacters(in: .whitespaces)
                 .replacingOccurrences(of: "\"", with: "")
             return variables[varName] != expected
+        }
+        if let eqRange = expression.range(of: "==") {
+            let varName = String(expression[expression.startIndex..<eqRange.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let expected = String(expression[eqRange.upperBound..<expression.endIndex]).trimmingCharacters(in: .whitespaces)
+                .replacingOccurrences(of: "\"", with: "")
+            return variables[varName] == expected
         }
         return false
     }
@@ -1791,17 +1827,11 @@ final class KeyboardRemapEngine {
     private func resolveToken(_ token: String) -> String {
         switch token {
         case "System:CurrentDate":
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd"
-            return formatter.string(from: Date())
+            return Self.isoDateFormatter.string(from: Date())
         case "System:CurrentTime":
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm:ss"
-            return formatter.string(from: Date())
+            return Self.timeFormatter.string(from: Date())
         case "System:CurrentDateTime":
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-            return formatter.string(from: Date())
+            return Self.dateTimeFormatter.string(from: Date())
         case "System:UserName":
             return NSUserName()
         case "System:FullUserName":
@@ -1837,9 +1867,10 @@ final class KeyboardRemapEngine {
         // Try focused element first (Chrome, Firefox, Brave, Edge)
         var focused: CFTypeRef?
         if AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-           let focusedElement = focused {
+           let focused = focused {
+            let focusedElement: AXUIElement = unsafeBitCast(focused, to: AXUIElement.self)
             var url: CFTypeRef?
-            if AXUIElementCopyAttributeValue(focusedElement as! AXUIElement, "AXURL" as CFString, &url) == .success,
+            if AXUIElementCopyAttributeValue(focusedElement, "AXURL" as CFString, &url) == .success,
                let urlString = url as? String, !urlString.isEmpty {
                 return urlString
             }
@@ -1848,19 +1879,21 @@ final class KeyboardRemapEngine {
         // Try main window (Safari, Orion)
         var window: CFTypeRef?
         if AXUIElementCopyAttributeValue(appElement, kAXMainWindowAttribute as CFString, &window) == .success,
-           let windowElement = window {
+           let windowVal = window {
+            let windowElement: AXUIElement = unsafeBitCast(windowVal, to: AXUIElement.self)
             // Attempt AXURL on the window itself
             var windowURL: CFTypeRef?
-            if AXUIElementCopyAttributeValue(windowElement as! AXUIElement, "AXURL" as CFString, &windowURL) == .success,
+            if AXUIElementCopyAttributeValue(windowElement, "AXURL" as CFString, &windowURL) == .success,
                let urlString = windowURL as? String, !urlString.isEmpty {
                 return urlString
             }
             // Try the document (Safari)
             var doc: CFTypeRef?
-            if AXUIElementCopyAttributeValue(windowElement as! AXUIElement, kAXDocumentAttribute as CFString, &doc) == .success,
-               let docElement = doc {
+            if AXUIElementCopyAttributeValue(windowElement, kAXDocumentAttribute as CFString, &doc) == .success,
+               let docVal = doc {
+                let docElement: AXUIElement = unsafeBitCast(docVal, to: AXUIElement.self)
                 var docURL: CFTypeRef?
-                if AXUIElementCopyAttributeValue(docElement as! AXUIElement, "AXURL" as CFString, &docURL) == .success,
+                if AXUIElementCopyAttributeValue(docElement, "AXURL" as CFString, &docURL) == .success,
                    let urlString = docURL as? String, !urlString.isEmpty {
                     return urlString
                 }
@@ -1878,9 +1911,10 @@ final class KeyboardRemapEngine {
         // Try main window title (works for most browsers)
         var window: CFTypeRef?
         if AXUIElementCopyAttributeValue(appElement, kAXMainWindowAttribute as CFString, &window) == .success,
-           let windowElement = window {
+           let windowVal = window {
+            let windowElement: AXUIElement = unsafeBitCast(windowVal, to: AXUIElement.self)
             var title: CFTypeRef?
-            if AXUIElementCopyAttributeValue(windowElement as! AXUIElement, kAXTitleAttribute as CFString, &title) == .success,
+            if AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &title) == .success,
                let titleString = title as? String, !titleString.isEmpty {
                 return titleString
             }
@@ -1891,10 +1925,19 @@ final class KeyboardRemapEngine {
 
     private func isAppRunning(target: String) -> Bool {
         let lowered = target.lowercased()
-        return NSWorkspace.shared.runningApplications.contains { app in
-            app.bundleIdentifier?.lowercased() == lowered
-            || app.localizedName?.lowercased() == lowered
+        // Refresh cache if stale
+        let now = eventTimestamp
+        if now.timeIntervalSince(runningAppsCacheTime) >= runningAppsCacheTTL {
+            cachedRunningApps = Set(
+                NSWorkspace.shared.runningApplications.compactMap { app in
+                    if let bid = app.bundleIdentifier?.lowercased() { return bid }
+                    if let name = app.localizedName?.lowercased() { return name }
+                    return nil
+                }
+            )
+            runningAppsCacheTime = now
         }
+        return cachedRunningApps.contains(lowered)
     }
 
     // MARK: - Pixel color condition
@@ -2013,9 +2056,10 @@ final class KeyboardRemapEngine {
             let appElement = AXUIElementCreateApplication(app.processIdentifier)
             var value: CFTypeRef?
             let focusedResult = AXUIElementCopyAttributeValue(appElement, "AXFocusedWindow" as CFString, &value)
-            if focusedResult == .success, let focusedWindow = value {
+            if focusedResult == .success, let focusedWindowVal = value {
+                let focusedWindow: AXUIElement = unsafeBitCast(focusedWindowVal, to: AXUIElement.self)
                 var title: CFTypeRef?
-                AXUIElementCopyAttributeValue(focusedWindow as! AXUIElement, "AXTitle" as CFString, &title)
+                AXUIElementCopyAttributeValue(focusedWindow, "AXTitle" as CFString, &title)
                 if let t = title as? String, !t.isEmpty { return t }
             }
             var windows: CFTypeRef?
@@ -2034,9 +2078,10 @@ final class KeyboardRemapEngine {
             let appElement = AXUIElementCreateApplication(app.processIdentifier)
             var value: CFTypeRef?
             let focusedResult = AXUIElementCopyAttributeValue(appElement, "AXFocusedWindow" as CFString, &value)
-            if focusedResult == .success, let focusedWindow = value {
+            if focusedResult == .success, let focusedWindowVal = value {
+                let focusedWindow: AXUIElement = unsafeBitCast(focusedWindowVal, to: AXUIElement.self)
                 var minimized: CFTypeRef?
-                AXUIElementCopyAttributeValue(focusedWindow as! AXUIElement, "AXMinimized" as CFString, &minimized)
+                AXUIElementCopyAttributeValue(focusedWindow, "AXMinimized" as CFString, &minimized)
                 return (minimized as? Bool) ?? false ? "true" : "false"
             }
             var windows: CFTypeRef?
@@ -2157,6 +2202,25 @@ final class KeyboardRemapEngine {
         case 7: return "vk_consumer_mute"
         case 2: return "vk_consumer_brightness_up"
         case 3: return "vk_consumer_brightness_down"
+        default: return nil
+        }
+    }
+
+    /// Map an NX_KEYTYPE value (extracted from a system-defined event's data1) to a consumer key ID.
+    private func consumerKeyIDForNXKeyType(_ nxKeyType: Int32) -> String? {
+        switch nxKeyType {
+        case NX_KEYTYPE_SOUND_UP: return "vk_consumer_volume_up"
+        case NX_KEYTYPE_SOUND_DOWN: return "vk_consumer_volume_down"
+        case NX_KEYTYPE_MUTE: return "vk_consumer_mute"
+        case NX_KEYTYPE_BRIGHTNESS_UP: return "vk_consumer_brightness_up"
+        case NX_KEYTYPE_BRIGHTNESS_DOWN: return "vk_consumer_brightness_down"
+        case NX_KEYTYPE_PLAY: return "vk_consumer_play"
+        case NX_KEYTYPE_NEXT: return "vk_consumer_next"
+        case NX_KEYTYPE_PREVIOUS: return "vk_consumer_prev"
+        case NX_KEYTYPE_REWIND: return "vk_consumer_rewind"
+        case NX_KEYTYPE_FF: return "vk_consumer_fast_forward"
+        case NX_KEYTYPE_EJECT: return "vk_consumer_eject"
+        case NX_KEYTYPE_POWER: return "vk_consumer_power"
         default: return nil
         }
     }

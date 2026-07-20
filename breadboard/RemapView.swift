@@ -16,17 +16,9 @@ struct RemapView: View {
                 Button {
                     store.addManipulator()
                 } label: {
-                    Label("Add Manipulator", systemImage: "plus")
+                    Image(systemName: "plus")
                 }
                 .help("Add a new manipulator (⌘N)")
-            }
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    store.importManipulatorFromPanel()
-                } label: {
-                    Label("Import", systemImage: "square.and.arrow.down")
-                }
-                .help("Import a manipulator from a .breadboardmanipulator file (⌥⌘I)")
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 ProfileSwitcherButton(store: store)
@@ -290,9 +282,6 @@ private struct ManipulatorRow: View {
             // Secondary info line
             HStack(spacing: 4) {
                 if !manipulator.notes.isEmpty {
-                    Image(systemName: "text.alignleft")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
                     Text(manipulator.notes)
                         .font(.caption)
                         .foregroundStyle(.secondary)

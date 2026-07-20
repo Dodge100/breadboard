@@ -60,18 +60,16 @@ struct ConfigProfileManagerView: View {
                 Button {
                     createProfile()
                 } label: {
-                    Label("New Profile", systemImage: "plus")
+                    Text("New Profile")
                 }
-                .buttonStyle(.borderedProminent)
                 .controlSize(.small)
 
                 Button {
                     guard let active = store.activeProfile else { return }
                     store.duplicateProfile(active.id)
                 } label: {
-                    Label("Duplicate Active", systemImage: "doc.on.doc")
+                    Text("Duplicate Active")
                 }
-                .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(store.activeProfile == nil)
 
@@ -169,74 +167,57 @@ private struct ProfileRow: View {
     @State private var showIconPicker = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             // Icon with popover picker
             Button {
                 showIconPicker.toggle()
             } label: {
                 Image(systemName: profile.icon)
-                    .font(.title3)
-                    .foregroundColor(isActive ? .accentColor : .secondary)
-                    .frame(width: 28, height: 28)
+                    .font(.body)
+                    .foregroundStyle(isActive ? Color.accentColor : .secondary)
+                    .frame(width: 20, height: 20)
             }
             .buttonStyle(.plain)
-            .help("Change icon")
             .popover(isPresented: $showIconPicker, arrowEdge: .trailing) {
                 iconPickerPopover
             }
 
-            // Name and metadata
-            VStack(alignment: .leading, spacing: 2) {
-                Text(profile.name)
-                    .font(.body.weight(.medium))
-                    .lineLimit(1)
-                if isActive {
-                    Text("Active")
-                        .font(.caption2)
-                        .foregroundColor(.accentColor)
-                }
-            }
+            // Name
+            Text(profile.name)
+                .lineLimit(1)
 
             Spacer()
 
-            // Action buttons
-            if !isActive {
+            // Active indicator or switch button
+            if isActive {
+                Text("Active")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentColor)
+            } else {
                 Button("Switch") {
                     onSwitch()
                 }
-                .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-            } else {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.accentColor)
-                    .font(.title3)
             }
 
+            // Context menu
             Menu {
-                Button { onRename() } label: {
-                    Label("Rename", systemImage: "pencil")
-                }
-                Button { onDuplicate() } label: {
-                    Label("Duplicate", systemImage: "doc.on.doc")
-                }
+                Button("Rename") { onRename() }
+                Button("Duplicate") { onDuplicate() }
                 Divider()
-                Button(role: .destructive) { onDelete() } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-                .disabled(profile.name == "Default")
+                Button("Delete", role: .destructive) { onDelete() }
+                    .disabled(profile.name == "Default")
             } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
+                Image(systemName: "ellipsis")
+                    .foregroundStyle(.tertiary)
             }
-            .buttonStyle(.plain)
             .menuStyle(.borderlessButton)
             .fixedSize()
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
         .background(isActive ? Color.accentColor.opacity(0.06) : Color.clear)
-        .cornerRadius(8)
+        .cornerRadius(6)
     }
 
     // MARK: - Icon Picker Popover
@@ -282,35 +263,29 @@ struct ProfileSwitcherButton: View {
     var body: some View {
         if let active = store.activeProfile {
             Menu {
-                Section("Profiles") {
+                Section {
                     ForEach(store.profiles) { profile in
                         Button {
                             store.switchProfile(to: profile.id)
                         } label: {
-                            Label {
-                                Text(profile.name)
-                            } icon: {
-                                Image(systemName: profile.icon)
-                            }
+                            Text(profile.name)
                             if profile.id == active.id {
                                 Image(systemName: "checkmark")
                             }
                         }
                     }
                 }
+
                 Divider()
+
                 Button {
                     showManager = true
                 } label: {
-                    Label("Manage Profiles\u{2026}", systemImage: "square.on.square")
+                    Text("Manage Profiles\u{2026}")
                 }
             } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: active.icon)
-                        .font(.body)
-                    Text(active.name)
-                        .font(.body)
-                }
+                Text(active.name)
+                    .font(.callout)
             }
             .menuStyle(.button)
             .buttonStyle(.plain)

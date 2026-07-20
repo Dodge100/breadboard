@@ -3,6 +3,7 @@ import SwiftUI
 struct ManipulatorEditorView: View {
     @ObservedObject var store: RemapStore
     let manipulator: Manipulator
+    @State private var showActionLibrary = false
 
     var body: some View {
         listContent
@@ -11,28 +12,34 @@ struct ManipulatorEditorView: View {
     // MARK: - List Layout
 
     private var listContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                headerSection
-                
-                VStack(alignment: .leading, spacing: 16) {
-                    triggerSection
-                    conditionsSection
-                    actionsSection
+        HStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    headerSection
+                    
+                    VStack(alignment: .leading, spacing: 16) {
+                        triggerSection
+                        conditionsSection
+                        actionsSection
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 16) {
+                        parametersSection
+                        notesSection
+                    }
                 }
-                
-                VStack(alignment: .leading, spacing: 16) {
-                    additionalTriggersSection
-                    parametersSection
-                    notesSection
-                }
-                
-                deleteButton
+                .padding(20)
+                .frame(maxWidth: 720, alignment: .leading)
             }
-            .padding(20)
-            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+            // Action Library slide-in panel
+            ActionLibraryPanel(isPresented: $showActionLibrary) { kind in
+                store.updateManipulator(manipulator.id) { $0.actions.append(Action(kind: kind)) }
+            }
+            .transition(.move(edge: .trailing).combined(with: .opacity))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .animation(.easeInOut(duration: 0.25), value: showActionLibrary)
     }
 
 
@@ -40,22 +47,20 @@ struct ManipulatorEditorView: View {
     // MARK: - Sections
 
     private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
                 TextField("Manipulator name", text: nameBinding)
                     .font(.title2.weight(.semibold))
                     .textFieldStyle(.plain)
                 Spacer()
-                Toggle("Enabled", isOn: enabledBinding)
+                Toggle("", isOn: enabledBinding)
                     .toggleStyle(.switch)
+                    .controlSize(.small)
                     .labelsHidden()
             }
-            HStack {
-                TextField("Folder (optional)", text: folderBinding)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 200)
-                Spacer()
-            }
+            TextField("Folder (optional)", text: folderBinding)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 200)
             TagEditorField(store: store, manipulator: manipulator)
         }
     }
@@ -84,7 +89,33 @@ struct ManipulatorEditorView: View {
                     Divider()
                     triggerConfiguration
                 }
+                
+                // Additional triggers (merged into main trigger section)
+                if !manipulator.additionalTriggers.isEmpty {
+                    Divider()
+                    additionalTriggersContent
+                }
             }
+        }
+    }
+
+    // MARK: - Additional Triggers (Merged into Trigger Section)
+
+    private var additionalTriggersContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(manipulator.additionalTriggers) { trigger in
+                AdditionalTriggerCard(
+                    store: store,
+                    manipulator: manipulator,
+                    trigger: trigger
+                )
+            }
+            Button {
+                store.addAdditionalTrigger(to: manipulator.id)
+            } label: {
+                Text("Add Another Trigger").font(.body)
+            }
+            .buttonStyle(.borderless)
         }
     }
 
@@ -660,41 +691,26 @@ struct ManipulatorEditorView: View {
                         )
                     }
                 }
-                AddStepMenu(
-                    label: "Add action",
-                    items: ActionKind.allCases.map { kind in
-                        AddStepMenu.Item(id: kind.rawValue, title: kind.rawValue)
-                    },
-                    action: { item in
-                        let kind = ActionKind(rawValue: item.id) ?? .sendKey
-                        store.updateManipulator(manipulator.id) { $0.actions.append(Action(kind: kind)) }
-                    }
-                )
-            }
-        }
-    }
-
-    // MARK: - Additional Triggers Section
-
-    private var additionalTriggersSection: some View {
-        StepCard(title: "Additional Triggers") {
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(manipulator.additionalTriggers) { trigger in
-                    AdditionalTriggerCard(
-                        store: store,
-                        manipulator: manipulator,
-                        trigger: trigger
-                    )
-                }
                 Button {
-                    store.addAdditionalTrigger(to: manipulator.id)
+                    withAnimation { showActionLibrary = true }
                 } label: {
-                    Text("Add Another Trigger").font(.body)
+                    Label("Add action", systemImage: "plus")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(Color.accentColor.opacity(0.2), lineWidth: 1)
+                        )
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
             }
         }
     }
+
+    // Note: Additional triggers are now merged into the main trigger section above
 
     private var parametersSection: some View {
         StepCard(title: "Parameters") {
@@ -716,24 +732,12 @@ struct ManipulatorEditorView: View {
         }
     }
 
-    private var deleteButton: some View {
-        HStack {
-            Spacer()
-            Button(role: .destructive) {
-                store.deleteManipulator(manipulator.id)
-            } label: {
-                Text("Delete Manipulator")
-            }
-            .buttonStyle(.borderless)
-        }
-    }
-
     // MARK: - Bindings
 
     private var nameBinding: Binding<String> {
         Binding(
             get: { manipulator.name },
-            set: { newValue in store.updateManipulator(manipulator.id) { $0.name = newValue } }
+            set: { newValue in store.updateManipulatorCosmetic(manipulator.id) { $0.name = newValue } }
         )
     }
 
@@ -747,14 +751,14 @@ struct ManipulatorEditorView: View {
     private var folderBinding: Binding<String> {
         Binding(
             get: { manipulator.folder },
-            set: { newValue in store.updateManipulator(manipulator.id) { $0.folder = newValue } }
+            set: { newValue in store.updateManipulatorCosmetic(manipulator.id) { $0.folder = newValue } }
         )
     }
 
     private var notesBinding: Binding<String> {
         Binding(
             get: { manipulator.notes },
-            set: { newValue in store.updateManipulator(manipulator.id) { $0.notes = newValue } }
+            set: { newValue in store.updateManipulatorCosmetic(manipulator.id) { $0.notes = newValue } }
         )
     }
 
@@ -762,7 +766,7 @@ struct ManipulatorEditorView: View {
         Binding(
             get: { manipulator.trigger.triggerName },
             set: { newValue in
-                store.updateManipulator(manipulator.id) { $0.trigger.triggerName = newValue }
+                store.updateManipulatorCosmetic(manipulator.id) { $0.trigger.triggerName = newValue }
             }
         )
     }
@@ -986,7 +990,7 @@ struct TagEditorField: View {
     private func addCurrentTag() {
         let trimmed = newTag.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        store.updateManipulator(manipulator.id) { $0.tags.insert(trimmed) }
+        store.updateManipulatorCosmetic(manipulator.id) { $0.tags.insert(trimmed) }
         newTag = ""
     }
 }
