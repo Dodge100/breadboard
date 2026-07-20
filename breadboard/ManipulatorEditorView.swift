@@ -34,10 +34,12 @@ struct ManipulatorEditorView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             // Action Library slide-in panel
-            ActionLibraryPanel(isPresented: $showActionLibrary) { kind in
-                store.updateManipulator(manipulator.id) { $0.actions.append(Action(kind: kind)) }
+            if showActionLibrary {
+                ActionLibraryPanel(isPresented: $showActionLibrary) { kind in
+                    store.updateManipulator(manipulator.id) { $0.actions.append(Action(kind: kind)) }
+                }
+                .transition(.move(edge: .trailing).combined(with: .opacity))
             }
-            .transition(.move(edge: .trailing).combined(with: .opacity))
         }
         .animation(.easeInOut(duration: 0.25), value: showActionLibrary)
     }
