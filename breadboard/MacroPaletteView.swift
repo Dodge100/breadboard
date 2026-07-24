@@ -152,11 +152,18 @@ struct MacroPaletteView: View {
                         ForEach(Array(section.items.enumerated()), id: \.element.id) { offset, manipulator in
                             let globalIndex = globalIndex(for: section, offset: offset)
                             PaletteItemRow(
-                                store: store,
                                 manipulator: manipulator,
                                 isSelected: globalIndex == selectedIndex,
                                 onTrigger: { triggerItem(manipulator) },
-                                onToggleStar: { store.toggleStarred(manipulator.id) }
+                                onToggleStar: { store.toggleStarred(manipulator.id) },
+                                onEdit: {
+                                    store.selectManipulator(manipulator.id)
+                                    store.hideMacroPalette()
+                                    if let mainWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
+                                        mainWindow.makeKeyAndOrderFront(nil)
+                                        NSApp.activate(ignoringOtherApps: true)
+                                    }
+                                }
                             )
                             .id(manipulator.id)
                             .onTapGesture {
@@ -283,11 +290,11 @@ private struct SectionHeader: View {
 // MARK: - Palette Item Row
 
 private struct PaletteItemRow: View {
-    @ObservedObject var store: RemapStore
     let manipulator: Manipulator
     let isSelected: Bool
     let onTrigger: () -> Void
     let onToggleStar: () -> Void
+    let onEdit: () -> Void
 
     private var primaryActionSummary: String? {
         manipulator.actions.first(where: { $0.isConfigured })?.summary
@@ -364,12 +371,7 @@ private struct PaletteItemRow: View {
                 Label(manipulator.isStarred ? "Unfavorite" : "Favorite", systemImage: "star")
             }
             Button("Edit in Editor") {
-                store.selectManipulator(manipulator.id)
-                store.hideMacroPalette()
-                if let mainWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
-                    mainWindow.makeKeyAndOrderFront(nil)
-                    NSApp.activate(ignoringOtherApps: true)
-                }
+                onEdit()
             }
             Divider()
             Text("Trigger: \(manipulator.trigger.displayLabel)")

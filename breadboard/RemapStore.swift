@@ -46,10 +46,7 @@ final class RemapStore: ObservableObject {
             manipulators: manipulators,
             selectedManipulatorID: selectedManipulatorID
         )
-        // Don't push identical consecutive snapshots
-        if undoStack.last != snapshot {
-            undoStack.append(snapshot)
-        }
+        undoStack.append(snapshot)
         // Cap undo stack to prevent unbounded memory growth
         let maxUndoDepth = 200
         if undoStack.count > maxUndoDepth {
@@ -107,23 +104,6 @@ final class RemapStore: ObservableObject {
 
     /// Internal clipboard storage for Get/Set/Clear Clipboard actions.
     @Published var clipboardText: String = ""
-
-    // MARK: - Widget Data Sharing
-
-    /// Push current app state to the WidgetKit extension via shared App Group container.
-    func pushWidgetData() {
-        var data = BreadboardWidgetData()
-        data.manipulatorCount = manipulators.count
-        data.enabledManipulatorCount = manipulators.filter(\.isEnabled).count
-        data.activeProfileName = activeProfile?.name ?? "Default"
-        data.activeProfileIcon = activeProfile?.icon ?? "person"
-        data.remapsActive = remapIsActive
-        data.statusText = remapStatusText
-        data.cpuUsage = 0  // Filled by the extension if available
-        data.memoryUsage = 0
-        data.variables = engine.variables
-        data.save()
-    }
 
     // MARK: - Config Profiles
 

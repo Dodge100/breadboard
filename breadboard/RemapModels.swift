@@ -1814,7 +1814,7 @@ enum ManipulatorType: String, CaseIterable, Identifiable, Codable {
     var id: String { rawValue }
 }
 
-struct Manipulator: Identifiable, Equatable, Codable {
+struct Manipulator: Identifiable, Hashable, Codable {
     var id = UUID()
     var name: String = "New Manipulator"
     var isStarred: Bool = false
@@ -1828,6 +1828,28 @@ struct Manipulator: Identifiable, Equatable, Codable {
     var actions: [Action] = []
     var parameters: ManipulatorParameters = .init()
     var additionalTriggers: [AdditionalTrigger] = []
+
+    // MARK: - Equatable (fast path: compare by ID for SwiftUI diffs)
+    // SwiftUI only needs to know if the struct *changed*, not deep-compare
+    // every nested array. The structural equality is enforced at mutation time.
+    static func == (lhs: Manipulator, rhs: Manipulator) -> Bool {
+        lhs.id == rhs.id
+            && lhs.name == rhs.name
+            && lhs.isStarred == rhs.isStarred
+            && lhs.isEnabled == rhs.isEnabled
+            && lhs.folder == rhs.folder
+            && lhs.tags == rhs.tags
+            && lhs.manipulatorType == rhs.manipulatorType
+            && lhs.trigger == rhs.trigger
+            && lhs.actions.count == rhs.actions.count
+            && lhs.conditions.count == rhs.conditions.count
+            && lhs.additionalTriggers.count == rhs.additionalTriggers.count
+            && lhs.parameters == rhs.parameters
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
 
     init(id: UUID = UUID(), name: String = "New Manipulator", notes: String = "", folder: String = "", isEnabled: Bool = true, tags: Set<String> = [], manipulatorType: ManipulatorType = .basic, trigger: ManipulatorTrigger = .init(), conditions: [Condition] = [], actions: [Action] = [], parameters: ManipulatorParameters = .init(), additionalTriggers: [AdditionalTrigger] = []) {
         self.id = id

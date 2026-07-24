@@ -10,161 +10,6 @@
 	<string>77</string>
 	<key>objects</key>
 	<dict>
-		<key>13EF25184565F2DCB6745E2C</key>
-		<dict>
-			<key>explicitFileTypes</key>
-			<dict/>
-			<key>isa</key>
-			<string>PBXFileSystemSynchronizedRootGroup</string>
-			<key>path</key>
-			<string>BreadboardWidgets</string>
-			<key>sourceTree</key>
-			<string>&lt;group&gt;</string>
-		</dict>
-		<key>4E47EB7E398988BBBED2F446</key>
-		<dict>
-			<key>buildActionMask</key>
-			<integer>2147483647</integer>
-			<key>files</key>
-			<array/>
-			<key>isa</key>
-			<string>PBXSourcesBuildPhase</string>
-			<key>runOnlyForDeploymentPostprocessing</key>
-			<integer>0</integer>
-		</dict>
-		<key>7C2B0E1092FA511E72110B54</key>
-		<dict>
-			<key>buildConfigurationList</key>
-			<string>88AF15B466A0742D238BE167</string>
-			<key>buildPhases</key>
-			<array>
-				<string>4E47EB7E398988BBBED2F446</string>
-				<string>8C147D733000AA7407462A67</string>
-				<string>C2403AC95B30C3EB518CC459</string>
-			</array>
-			<key>buildRules</key>
-			<array/>
-			<key>dependencies</key>
-			<array/>
-			<key>fileSystemSynchronizedGroups</key>
-			<array>
-				<string>13EF25184565F2DCB6745E2C</string>
-			</array>
-			<key>isa</key>
-			<string>PBXNativeTarget</string>
-			<key>name</key>
-			<string>BreadboardWidgets</string>
-			<key>packageProductDependencies</key>
-			<array/>
-			<key>productName</key>
-			<string>BreadboardWidgets</string>
-			<key>productReference</key>
-			<string>9D3138C5A1F77611D84BF6BA</string>
-			<key>productType</key>
-			<string>com.apple.product-type.app-extension</string>
-		</dict>
-		<key>88AF15B466A0742D238BE167</key>
-		<dict>
-			<key>buildConfigurations</key>
-			<array>
-				<string>C182CDAF07315F5E85F4F25B</string>
-				<string>9A934583A3EFE52B5ABB1FC4</string>
-			</array>
-			<key>defaultConfigurationIsVisible</key>
-			<integer>0</integer>
-			<key>defaultConfigurationName</key>
-			<string>Release</string>
-			<key>isa</key>
-			<string>XCConfigurationList</string>
-		</dict>
-		<key>8C147D733000AA7407462A67</key>
-		<dict>
-			<key>buildActionMask</key>
-			<integer>2147483647</integer>
-			<key>files</key>
-			<array/>
-			<key>isa</key>
-			<string>PBXFrameworksBuildPhase</string>
-			<key>runOnlyForDeploymentPostprocessing</key>
-			<integer>0</integer>
-		</dict>
-		<key>9A934583A3EFE52B5ABB1FC4</key>
-		<dict>
-			<key>buildSettings</key>
-			<dict>
-				<key>APPLICATION_EXTENSION_API_ONLY</key>
-				<string>YES</string>
-				<key>ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS</key>
-				<string>YES</string>
-				<key>CODE_SIGN_STYLE</key>
-				<string>Automatic</string>
-				<key>CURRENT_PROJECT_VERSION</key>
-				<string>1</string>
-				<key>DEBUG_INFORMATION_FORMAT</key>
-				<string>dwarf-with-dsym</string>
-				<key>ENABLE_APP_SANDBOX</key>
-				<string>NO</string>
-				<key>ENABLE_HARDENED_RUNTIME</key>
-				<string>YES</string>
-				<key>ENABLE_USER_SCRIPT_SANDBOXING</key>
-				<string>YES</string>
-				<key>GENERATE_INFOPLIST_FILE</key>
-				<string>YES</string>
-				<key>INFOPLIST_FILE</key>
-				<string>BreadboardWidgets/Info.plist</string>
-				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
-				<string>Breadboard Widgets</string>
-				<key>INFOPLIST_KEY_NSHumanReadableCopyright</key>
-				<string></string>
-				<key>LD_RUNPATH_SEARCH_PATHS</key>
-				<array>
-					<string>$(inherited)</string>
-					<string>@executable_path/../Frameworks</string>
-					<string>@executable_path/../../Frameworks</string>
-				</array>
-				<key>MACOSX_DEPLOYMENT_TARGET</key>
-				<string>26.1</string>
-				<key>MARKETING_VERSION</key>
-				<string>1.0</string>
-				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
-				<string>com.dodge1.breadboard.widgets</string>
-				<key>PRODUCT_NAME</key>
-				<string>$(TARGET_NAME)</string>
-				<key>SDKROOT</key>
-				<string>macosx</string>
-				<key>SKIP_INSTALL</key>
-				<string>YES</string>
-				<key>SWIFT_APPROACHABLE_CONCURRENCY</key>
-				<string>YES</string>
-				<key>SWIFT_COMPILATION_MODE</key>
-				<string>wholemodule</string>
-				<key>SWIFT_DEFAULT_ACTOR_ISOLATION</key>
-				<string>MainActor</string>
-				<key>SWIFT_EMIT_LOC_STRINGS</key>
-				<string>YES</string>
-				<key>SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY</key>
-				<string>YES</string>
-				<key>SWIFT_VERSION</key>
-				<string>5.0</string>
-			</dict>
-			<key>isa</key>
-			<string>XCBuildConfiguration</string>
-			<key>name</key>
-			<string>Release</string>
-		</dict>
-		<key>9D3138C5A1F77611D84BF6BA</key>
-		<dict>
-			<key>explicitFileType</key>
-			<string>wrapper.app-extension</string>
-			<key>includeInIndex</key>
-			<integer>0</integer>
-			<key>isa</key>
-			<string>PBXFileReference</string>
-			<key>path</key>
-			<string>BreadboardWidgets.appex</string>
-			<key>sourceTree</key>
-			<string>BUILT_PRODUCTS_DIR</string>
-		</dict>
 		<key>BB04A8052FB5696400CC209D</key>
 		<dict>
 			<key>children</key>
@@ -172,7 +17,6 @@
 				<string>BB04A8102FB5696500CC209D</string>
 				<string>BB04A8212FB5696600CC209D</string>
 				<string>BB04A80F2FB5696500CC209D</string>
-				<string>13EF25184565F2DCB6745E2C</string>
 			</array>
 			<key>isa</key>
 			<string>PBXGroup</string>
@@ -191,11 +35,6 @@
 				<string>2630</string>
 				<key>TargetAttributes</key>
 				<dict>
-					<key>7C2B0E1092FA511E72110B54</key>
-					<dict>
-						<key>CreatedOnToolsVersion</key>
-						<string>26.3</string>
-					</dict>
 					<key>BB04A80D2FB5696500CC209D</key>
 					<dict>
 						<key>CreatedOnToolsVersion</key>
@@ -232,7 +71,6 @@
 			<array>
 				<string>BB04A80D2FB5696500CC209D</string>
 				<string>BB04A8222FB5696600CC209D</string>
-				<string>7C2B0E1092FA511E72110B54</string>
 			</array>
 		</dict>
 		<key>BB04A8092FB5696400CC209D</key>
@@ -332,7 +170,6 @@
 			<array>
 				<string>BB04A80E2FB5696500CC209D</string>
 				<string>BB04A8202FB5696600CC209D</string>
-				<string>9D3138C5A1F77611D84BF6BA</string>
 			</array>
 			<key>isa</key>
 			<string>PBXGroup</string>
@@ -465,6 +302,8 @@
 				<string>DEBUG $(inherited)</string>
 				<key>SWIFT_OPTIMIZATION_LEVEL</key>
 				<string>-Onone</string>
+				<key>SWIFT_COMPILATION_MODE</key>
+				<string>incremental</string>
 			</dict>
 			<key>isa</key>
 			<string>XCBuildConfiguration</string>
@@ -998,83 +837,6 @@
 			<string>Release</string>
 			<key>isa</key>
 			<string>XCConfigurationList</string>
-		</dict>
-		<key>C182CDAF07315F5E85F4F25B</key>
-		<dict>
-			<key>buildSettings</key>
-			<dict>
-				<key>APPLICATION_EXTENSION_API_ONLY</key>
-				<string>YES</string>
-				<key>ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS</key>
-				<string>YES</string>
-				<key>CODE_SIGN_STYLE</key>
-				<string>Automatic</string>
-				<key>CURRENT_PROJECT_VERSION</key>
-				<string>1</string>
-				<key>DEBUG_INFORMATION_FORMAT</key>
-				<string>dwarf</string>
-				<key>ENABLE_APP_SANDBOX</key>
-				<string>NO</string>
-				<key>ENABLE_HARDENED_RUNTIME</key>
-				<string>YES</string>
-				<key>ENABLE_USER_SCRIPT_SANDBOXING</key>
-				<string>YES</string>
-				<key>GENERATE_INFOPLIST_FILE</key>
-				<string>YES</string>
-				<key>INFOPLIST_FILE</key>
-				<string>BreadboardWidgets/Info.plist</string>
-				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
-				<string>Breadboard Widgets</string>
-				<key>INFOPLIST_KEY_NSHumanReadableCopyright</key>
-				<string></string>
-				<key>LD_RUNPATH_SEARCH_PATHS</key>
-				<array>
-					<string>$(inherited)</string>
-					<string>@executable_path/../Frameworks</string>
-					<string>@executable_path/../../Frameworks</string>
-				</array>
-				<key>MACOSX_DEPLOYMENT_TARGET</key>
-				<string>26.1</string>
-				<key>MARKETING_VERSION</key>
-				<string>1.0</string>
-				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
-				<string>com.dodge1.breadboard.widgets</string>
-				<key>PRODUCT_NAME</key>
-				<string>$(TARGET_NAME)</string>
-				<key>SDKROOT</key>
-				<string>macosx</string>
-				<key>SKIP_INSTALL</key>
-				<string>YES</string>
-				<key>SWIFT_ACTIVE_COMPILATION_CONDITIONS</key>
-				<string>DEBUG $(inherited)</string>
-				<key>SWIFT_APPROACHABLE_CONCURRENCY</key>
-				<string>YES</string>
-				<key>SWIFT_DEFAULT_ACTOR_ISOLATION</key>
-				<string>MainActor</string>
-				<key>SWIFT_EMIT_LOC_STRINGS</key>
-				<string>YES</string>
-				<key>SWIFT_OPTIMIZATION_LEVEL</key>
-				<string>-Onone</string>
-				<key>SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY</key>
-				<string>YES</string>
-				<key>SWIFT_VERSION</key>
-				<string>5.0</string>
-			</dict>
-			<key>isa</key>
-			<string>XCBuildConfiguration</string>
-			<key>name</key>
-			<string>Debug</string>
-		</dict>
-		<key>C2403AC95B30C3EB518CC459</key>
-		<dict>
-			<key>buildActionMask</key>
-			<integer>2147483647</integer>
-			<key>files</key>
-			<array/>
-			<key>isa</key>
-			<string>PBXResourcesBuildPhase</string>
-			<key>runOnlyForDeploymentPostprocessing</key>
-			<integer>0</integer>
 		</dict>
 	</dict>
 	<key>rootObject</key>

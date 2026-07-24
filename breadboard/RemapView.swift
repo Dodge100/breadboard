@@ -157,8 +157,14 @@ private struct ManipulatorSidebar: View {
                 ForEach(sortedFolders, id: \.self) { folder in
                     DisclosureGroup(isExpanded: expandedBinding(for: folder)) {
                         ForEach(groups[folder] ?? []) { manipulator in
-                            ManipulatorRow(store: store, manipulator: manipulator)
-                                .tag(manipulator.id)
+                            ManipulatorRow(
+                                manipulator: manipulator,
+                                onToggleEnabled: { store.updateManipulator(manipulator.id) { $0.isEnabled.toggle() } },
+                                onDuplicate: { store.duplicateManipulator(manipulator.id) },
+                                onExport: { store.exportManipulator(manipulator.id) },
+                                onDelete: { store.deleteManipulator(manipulator.id) }
+                            )
+                            .tag(manipulator.id)
                         }
                     } label: {
                         Text(folder)
@@ -170,8 +176,15 @@ private struct ManipulatorSidebar: View {
         } else {
             List(selection: $store.selectedManipulatorID) {
                 ForEach(Array(displayedManipulators.enumerated()), id: \.element.id) { index, manipulator in
-                    ManipulatorRow(store: store, manipulator: manipulator, index: index)
-                        .tag(manipulator.id)
+                    ManipulatorRow(
+                        manipulator: manipulator,
+                        index: index,
+                        onToggleEnabled: { store.updateManipulator(manipulator.id) { $0.isEnabled.toggle() } },
+                        onDuplicate: { store.duplicateManipulator(manipulator.id) },
+                        onExport: { store.exportManipulator(manipulator.id) },
+                        onDelete: { store.deleteManipulator(manipulator.id) }
+                    )
+                    .tag(manipulator.id)
                 }
             }
             .listStyle(.sidebar)
@@ -187,9 +200,12 @@ private struct ManipulatorSidebar: View {
 }
 
 private struct ManipulatorRow: View {
-    @ObservedObject var store: RemapStore
     let manipulator: Manipulator
     var index: Int = 0
+    var onToggleEnabled: () -> Void
+    var onDuplicate: () -> Void
+    var onExport: () -> Void
+    var onDelete: () -> Void
 
     var body: some View {
         HStack(spacing: 6) {
@@ -206,18 +222,18 @@ private struct ManipulatorRow: View {
         .opacity(manipulator.isEnabled ? 1 : 0.5)
         .contextMenu {
             Button(manipulator.isEnabled ? "Disable" : "Enable") {
-                store.updateManipulator(manipulator.id) { $0.isEnabled.toggle() }
+                onToggleEnabled()
             }
             Button("Duplicate") {
-                store.duplicateManipulator(manipulator.id)
+                onDuplicate()
             }
             Divider()
             Button("Export…") {
-                store.exportManipulator(manipulator.id)
+                onExport()
             }
             Divider()
             Button("Delete", role: .destructive) {
-                store.deleteManipulator(manipulator.id)
+                onDelete()
             }
         }
     }

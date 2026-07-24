@@ -11,7 +11,7 @@ struct MenuBarItemsView: View {
                 .navigationTitle("Menu Bar Items")
         } detail: {
             MenuBarItemEditorPane(store: store)
-                .frame(minWidth: 520)
+                .frame(minWidth: 560)
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -118,7 +118,7 @@ private struct MenuBarItemsSidebar: View {
             } else {
                 List(selection: $store.selectedMenuBarItemID) {
                     ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
-                        MenuBarItemRow(store: store, item: item, index: index)
+                        MenuBarItemRow(item: item, index: index)
                             .tag(item.id)
                             .contextMenu {
                                 contextMenuItems(for: item)
@@ -179,7 +179,6 @@ private struct MenuBarItemsSidebar: View {
 // MARK: - Menu Bar Item Row
 
 private struct MenuBarItemRow: View {
-    @ObservedObject var store: RemapStore
     let item: MenuBarItem
     var index: Int = 0
 
@@ -229,6 +228,13 @@ private struct MenuBarItemEditorPane: View {
                     Label("No Item Selected", systemImage: "menubar.rectangle")
                 } description: {
                     Text("Select a menu bar item from the sidebar.")
+                } actions: {
+                    Button {
+                        store.addMenuBarItem()
+                    } label: {
+                        Text("Add Item")
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
             }
         }
@@ -459,7 +465,7 @@ private struct MenuBarItemEditorPane: View {
                 }
             }
             .padding(16)
-            .frame(maxWidth: 640, alignment: .center)
+            .frame(maxWidth: 720, alignment: .center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.3))
