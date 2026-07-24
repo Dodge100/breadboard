@@ -14,6 +14,11 @@ extension UTType {
     static var breadboardMenuBarItem: UTType {
         UTType(exportedAs: "com.breadboard.menubaritem", conformingTo: .json)
     }
+
+    /// The breadboard widget file format: a single `WidgetItem` encoded as JSON.
+    static var breadboardWidget: UTType {
+        UTType(exportedAs: "com.breadboard.widget", conformingTo: .json)
+    }
 }
 
 // MARK: - File I/O
@@ -181,6 +186,93 @@ enum MenuBarItemFile {
     // MARK: Helpers
 
     /// Derive a safe file name from the menu bar item name.
+    private static func sanitizedFilename(for name: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(.whitespaces).union(.punctuationCharacters)
+        let safe = name.unicodeScalars.filter { allowed.contains($0) }.map(Character.init)
+        let trimmed = String(safe).trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = trimmed.isEmpty ? "Untitled" : trimmed
+        return "\(base).\(fileExtension)"
+    }
+}
+
+// MARK: - Widget File I/O
+
+enum WidgetFile {
+    /// The file extension for exported widget files (no leading dot).
+    static let fileExtension = "breadboardwidget"
+
+    // MARK: Export
+
+    /// Encode a widget as JSON data.
+    static func encode(_ item: WidgetItem) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(item)
+    }
+
+    /// Write a single widget to a file URL.
+    static func write(_ item: WidgetItem, to url: URL) throws {
+        try encode(item).write(to: url)
+    }
+
+    /// Show a save panel and export the given widget.
+    /// - Returns: `true` if the file was written successfully.
+    @MainActor
+    @discardableResult
+    static func export(_ item: WidgetItem) -> Bool {
+        let panel = NSSavePanel()
+        panel.title = "Export Widget"
+        panel.nameFieldStringValue = sanitizedFilename(for: item.name)
+        panel.allowedContentTypes = [.breadboardWidget]
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
+
+        do {
+            try write(item, to: url)
+            return true
+        } catch {
+            NSAlert(error: error).runModal()
+            return false
+        }
+    }
+
+    // MARK: Import
+
+    /// Decode a widget from JSON data.
+    static func decode(_ data: Data) throws -> WidgetItem {
+        try JSONDecoder().decode(WidgetItem.self, from: data)
+    }
+
+    /// Read and decode a widget from a file URL.
+    static func read(from url: URL) throws -> WidgetItem {
+        try decode(Data(contentsOf: url))
+    }
+
+    /// Show an open panel and return the selected widget.
+    @MainActor
+    static func importSingle() -> WidgetItem? {
+        let panel = NSOpenPanel()
+        panel.title = "Import Widget"
+        panel.allowedContentTypes = [.breadboardWidget]
+        panel.allowsMultipleSelection = false
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+
+        do {
+            return try read(from: url)
+        } catch {
+            NSAlert(error: error).runModal()
+            return nil
+        }
+    }
+
+    // MARK: Helpers
+
+    /// Derive a safe file name from the widget name.
     private static func sanitizedFilename(for name: String) -> String {
         let allowed = CharacterSet.alphanumerics.union(.whitespaces).union(.punctuationCharacters)
         let safe = name.unicodeScalars.filter { allowed.contains($0) }.map(Character.init)
