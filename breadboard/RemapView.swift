@@ -21,6 +21,23 @@ struct RemapView: View {
                 .help("Add a new manipulator (⌘N)")
             }
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    store.importManipulatorFromPanel()
+                } label: {
+                    Image(systemName: "tray.and.arrow.down")
+                }
+                .help("Import a manipulator file (⌘⌥I)")
+
+                Button {
+                    if let id = store.selectedManipulatorID {
+                        store.exportManipulator(id)
+                    }
+                } label: {
+                    Image(systemName: "tray.and.arrow.up")
+                }
+                .disabled(store.selectedManipulatorID == nil)
+                .help("Export the selected manipulator (⌘⌥E)")
+
                 ProfileSwitcherButton(store: store)
             }
         }
@@ -45,8 +62,7 @@ private struct ManipulatorSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            searchAndFilter
-            Divider()
+            searchField
             manipulatorList
                 .frame(maxHeight: .infinity)
             permissionBanner
@@ -57,31 +73,22 @@ private struct ManipulatorSidebar: View {
     @ViewBuilder
     private var permissionBanner: some View {
         if store.remapNeedsPermission {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Accessibility Access Required", systemImage: "exclamationmark.shield.fill")
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Accessibility Required", systemImage: "exclamationmark.shield.fill")
                     .font(.subheadline.weight(.medium))
-                Text("Breadboard needs Accessibility permission to intercept keyboard events.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 HStack(spacing: 8) {
-                    Button("Grant Permission") {
+                    Button("Grant") {
                         store.requestRemapPermissions()
                     }
-                    .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    Button("Open System Settings") {
+                    Button("Settings") {
                         store.openAccessibilitySettings()
                     }
-                    .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
             }
-            .padding(10)
+            .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.1))
-            .overlay(alignment: .top) {
-                Divider()
-            }
         } else {
             HStack(spacing: 6) {
                 Circle()
@@ -93,98 +100,31 @@ private struct ManipulatorSidebar: View {
                 Spacer()
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.quaternary.opacity(0.3))
-            .overlay(alignment: .top) {
-                Divider()
-            }
+            .padding(.vertical, 4)
         }
     }
 
-    private var searchAndFilter: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.tertiary)
-                TextField("Search manipulators", text: $store.searchText)
+    private var searchField: some View {
+        HStack {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.tertiary)
+            TextField("Search", text: $store.searchText)
                 .textFieldStyle(.plain)
-                if !store.searchText.isEmpty {
-                    Button {
-                        store.searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.tertiary)
-                    }
-                    .buttonStyle(.borderless)
-                }
+            if !store.searchText.isEmpty {
                 Button {
-                    showFilterPopover.toggle()
+                    store.searchText = ""
                 } label: {
-                    Image(systemName: "line.3.horizontal.decrease.circle")
+                    Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.borderless)
-                .popover(isPresented: $showFilterPopover, arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle("Active only", isOn: $activeOnly)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                        Toggle("Group by folder", isOn: $groupByFolder)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                        if groupByFolder && !store.allFolders.isEmpty {
-                            Divider()
-                            Text("Folders")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            ForEach(store.allFolders, id: \.self) { folder in
-                                Text(folder)
-                                    .font(.body)
-                            }
-                        }
-                    }
-                    .padding(12)
-                    .frame(width: 180)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
-
-            if !store.allTags.isEmpty {
-                tagFilter
             }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
     }
 
-    private var tagFilter: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("Tags")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if !store.selectedTags.isEmpty {
-                    Button("Clear") {
-                        store.clearTagFilter()
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
-                }
-            }
-            FlowLayout(spacing: 4) {
-                ForEach(store.allTags, id: \.self) { tag in
-                    TagChip(
-                        label: tag,
-                        isSelected: store.selectedTags.contains(tag),
-                        action: { store.toggleTag(tag) }
-                    )
-                }
-            }
-        }
-    }
+
 
     @ViewBuilder
     private var manipulatorList: some View {
@@ -229,8 +169,8 @@ private struct ManipulatorSidebar: View {
             .listStyle(.sidebar)
         } else {
             List(selection: $store.selectedManipulatorID) {
-                ForEach(displayedManipulators) { manipulator in
-                    ManipulatorRow(store: store, manipulator: manipulator)
+                ForEach(Array(displayedManipulators.enumerated()), id: \.element.id) { index, manipulator in
+                    ManipulatorRow(store: store, manipulator: manipulator, index: index)
                         .tag(manipulator.id)
                 }
             }
@@ -249,55 +189,21 @@ private struct ManipulatorSidebar: View {
 private struct ManipulatorRow: View {
     @ObservedObject var store: RemapStore
     let manipulator: Manipulator
+    var index: Int = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                // Status indicator
-                if !manipulator.isEnabled {
-                    Image(systemName: "pause.circle.fill")
-                        .foregroundStyle(.tertiary)
-                        .font(.caption2)
-                }
-                
-                // Name - primary text
-                Text(manipulator.name.isEmpty ? "Untitled" : manipulator.name)
-                    .font(.body)
+        HStack(spacing: 6) {
+            Text(manipulator.name.isEmpty ? "Untitled" : manipulator.name)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if !manipulator.trigger.displayLabel.isEmpty {
+                Text(manipulator.trigger.displayLabel)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
-                
-                Spacer(minLength: 4)
-                
-                // Trigger badge - compact
-                if !manipulator.trigger.displayLabel.isEmpty {
-                    Text(manipulator.trigger.displayLabel)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 3))
-                }
-            }
-            
-            // Secondary info line
-            HStack(spacing: 4) {
-                if !manipulator.notes.isEmpty {
-                    Text(manipulator.notes)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                if !manipulator.tags.isEmpty {
-                    Text(manipulator.tags.sorted().prefix(2).joined(separator: " · "))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
             }
         }
-        .padding(.vertical, 2)
-        .opacity(manipulator.isEnabled ? 1 : 0.55)
+        .opacity(manipulator.isEnabled ? 1 : 0.5)
         .contextMenu {
             Button(manipulator.isEnabled ? "Disable" : "Enable") {
                 store.updateManipulator(manipulator.id) { $0.isEnabled.toggle() }
@@ -343,28 +249,7 @@ struct ManipulatorEditorPane: View {
     }
 }
 
-private struct TagChip: View {
-    let label: String
-    let isSelected: Bool
-    let action: () -> Void
 
-    var body: some View {
-        Button(action: action) {
-            Text(label)
-                .font(.caption)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule().fill(isSelected ? Color.accentColor.opacity(0.18) : Color.gray.opacity(0.12))
-                )
-                .overlay(
-                    Capsule().stroke(isSelected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
-                )
-                .foregroundStyle(isSelected ? Color.accentColor : .primary)
-        }
-        .buttonStyle(.plain)
-    }
-}
 
 struct FlowLayout: Layout {
     var spacing: CGFloat = 4

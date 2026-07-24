@@ -7,6 +7,7 @@ struct ConditionStepRow: View {
     let condition: Condition
     let onChange: ((inout Condition) -> Void) -> Void
     let onDelete: () -> Void
+    var onChangeKind: (() -> Void)? = nil
 
     @State private var installedApps: [InstalledApp] = []
 
@@ -14,25 +15,21 @@ struct ConditionStepRow: View {
         VStack(alignment: .leading, spacing: 8) {
             // Header row with kind selector and delete
             HStack(alignment: .center, spacing: 8) {
-                // Kind selector with icon
-                HStack(spacing: 4) {
-                    Image(systemName: condition.kind.symbol)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 14)
-                    Picker("Kind", selection: kindBinding) {
-                        ForEach(ConditionKind.allCases) { kind in
-                            HStack {
-                                Text(kind.rawValue)
-                                if kind == condition.kind {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                            .tag(kind)
-                        }
+                // Kind label — click to replace
+                Button {
+                    onChangeKind?()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: condition.kind.symbol)
+                            .foregroundStyle(.orange)
+                            .frame(width: 16)
+                        Text(condition.kind.rawValue)
+                            .font(.subheadline.weight(.medium))
+
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
                 }
+                .buttonStyle(.plain)
+                .help("Click to change condition type")
                 
                 // Comparison operator (when applicable)
                 if condition.kind != .deviceExists && condition.kind != .expression && condition.kind != .eventChanged {
@@ -43,19 +40,18 @@ struct ConditionStepRow: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
-                    .frame(width: 80)
+                    .frame(width: 72)
                 }
                 
                 Spacer()
                 
                 // Delete button
                 Button(role: .destructive, action: onDelete) {
-                    Image(systemName: "minus.circle")
+                    Image(systemName: "xmark.circle.fill")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
-                .help("Remove condition")
             }
             
             // Value field based on condition type
@@ -63,7 +59,7 @@ struct ConditionStepRow: View {
                 HStack(spacing: 6) {
                     TextField("Variable name", text: targetBinding)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
+                        .font(.system(.subheadline, design: .monospaced))
                     Text("=")
                         .foregroundStyle(.secondary)
                     if isBoolValue(condition.value) {
@@ -73,7 +69,7 @@ struct ConditionStepRow: View {
                     } else {
                         TextField("Expected value", text: variableValueBinding)
                             .textFieldStyle(.roundedBorder)
-                            .font(.system(.body, design: .monospaced))
+                            .font(.system(.subheadline, design: .monospaced))
                     }
                     Button(isBoolValue(condition.value) ? "Text" : "Bool") {
                         let current = condition.value
@@ -93,7 +89,7 @@ struct ConditionStepRow: View {
                 HStack(spacing: 8) {
                     TextField(condition.kind.placeholder, text: targetBinding)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
+                        .font(.system(.subheadline, design: .monospaced))
                     AppPicker(installedApps: installedApps) { app in
                         onChange { condition in
                             condition.target = condition.kind == .frontmostAppName
@@ -125,12 +121,7 @@ struct ConditionStepRow: View {
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
-        .padding(10)
-        .background(.background, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.separator.opacity(0.5), lineWidth: 1)
-        )
+        .padding(8)
     }
 
     private func loadInstalledApps() {
@@ -216,6 +207,7 @@ struct ActionStepRow: View {
     let action: Action
     let onChange: ((inout Action) -> Void) -> Void
     let onDelete: () -> Void
+    var onChangeKind: (() -> Void)? = nil
 
     @State private var isExpanded = true
 
@@ -224,7 +216,6 @@ struct ActionStepRow: View {
             header
             if isExpanded {
                 VStack(alignment: .leading, spacing: 8) {
-                    Divider()
                     actionEditor
                     actionModifiersSection
                     fireModeSection
@@ -233,44 +224,25 @@ struct ActionStepRow: View {
                 .padding(.top, 8)
             }
         }
-        .padding(10)
-        .background(.background, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.separator.opacity(0.5), lineWidth: 1)
-        )
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
-            // Kind selector with chevron to indicate it's a menu
-            Menu {
-                ForEach(ActionKind.allCases) { kind in
-                    Button {
-                        onChange { $0.kind = kind }
-                    } label: {
-                        HStack {
-                            Text(kind.rawValue)
-                            if kind == action.kind {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
+            // Kind label — click to replace
+            Button {
+                onChangeKind?()
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: action.kind.symbol)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.green)
                         .frame(width: 16)
                     Text(action.kind.rawValue)
-                        .font(.body.weight(.medium))
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .font(.subheadline.weight(.medium))
+
                 }
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
+            .buttonStyle(.plain)
+            .help("Click to change action type")
 
             // Summary as secondary text
             Text(action.summary)
@@ -295,7 +267,7 @@ struct ActionStepRow: View {
                 .help(isExpanded ? "Collapse" : "Expand")
 
                 Button(role: .destructive, action: onDelete) {
-                    Image(systemName: "minus.circle")
+                    Image(systemName: "xmark.circle.fill")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
@@ -449,7 +421,6 @@ struct ActionStepRow: View {
 
     private var actionModifiersSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Divider()
             Text("Modifiers")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
@@ -475,7 +446,6 @@ struct ActionStepRow: View {
     @ViewBuilder
     private var actionConditionsSection: some View {
         if !action.actionConditions.isEmpty {
-            Divider()
             VStack(alignment: .leading, spacing: 4) {
                 Text("Per-action conditions")
                     .font(.caption.weight(.medium))
@@ -899,8 +869,7 @@ private struct SendKeyEditor: View {
                                 .font(.caption)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(action.toModifiers.contains(mod) ? Color.accentColor.opacity(0.2) : Color.gray.opacity(0.1))
-                                .cornerRadius(4)
+                                .background(action.toModifiers.contains(mod) ? Color(nsColor: .controlBackgroundColor).opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 4))
                         }
                         .buttonStyle(.plain)
                     }
@@ -925,8 +894,7 @@ private struct SendKeyEditor: View {
                         .font(.caption)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(selected.contains(mod) ? Color.accentColor.opacity(0.2) : Color.gray.opacity(0.1))
-                        .cornerRadius(4)
+                        .background(selected.contains(mod) ? Color(nsColor: .controlBackgroundColor).opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 4))
                 }
                 .buttonStyle(.plain)
             }
@@ -1161,7 +1129,7 @@ private struct RunShortcutEditor: View {
                                     .font(.caption)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
-                                    .background(.gray.opacity(0.12), in: Capsule())
+                                    .background(.quaternary, in: Capsule())
                             }
                             .buttonStyle(.plain)
                         }
@@ -1191,77 +1159,98 @@ struct ManipulatorParametersEditor: View {
     let onChange: (ManipulatorParameters) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             parameterRow(
-                title: "to_if_alone_timeout",
+                icon: "timer",
+                title: "To If Alone Timeout",
                 help: "How long a key can be held before being treated as held rather than tapped.",
                 unit: "ms",
-                value: parameters.toIfAloneTimeoutMilliseconds,
                 binding: intBinding(
                     get: { parameters.toIfAloneTimeoutMilliseconds },
                     set: { newValue in onChange(intWithKey(parameters, \.toIfAloneTimeoutMilliseconds, newValue)) }
                 )
             )
             parameterRow(
-                title: "to_if_held_down_threshold",
+                icon: "hand.raised",
+                title: "To If Held Down Threshold",
                 help: "Minimum hold duration for the key to be considered held down.",
                 unit: "ms",
-                value: parameters.toIfHeldDownThresholdMilliseconds,
                 binding: intBinding(
                     get: { parameters.toIfHeldDownThresholdMilliseconds },
                     set: { newValue in onChange(intWithKey(parameters, \.toIfHeldDownThresholdMilliseconds, newValue)) }
                 )
             )
             parameterRow(
-                title: "to_delay_action_delay",
+                icon: "clock.arrow.circlepath",
+                title: "To Delay Action Delay",
                 help: "Delay before the delayed action is executed.",
                 unit: "ms",
-                value: parameters.toDelayActionDelayMilliseconds,
                 binding: intBinding(
                     get: { parameters.toDelayActionDelayMilliseconds },
                     set: { newValue in onChange(intWithKey(parameters, \.toDelayActionDelayMilliseconds, newValue)) }
                 )
             )
             parameterRow(
-                title: "simultaneous_threshold",
+                icon: "arrow.left.arrow.right",
+                title: "Simultaneous Threshold",
                 help: "Maximum gap between key presses in a sequence trigger.",
                 unit: "ms",
-                value: parameters.simultaneousThresholdMilliseconds,
                 binding: intBinding(
                     get: { parameters.simultaneousThresholdMilliseconds },
                     set: { newValue in onChange(intWithKey(parameters, \.simultaneousThresholdMilliseconds, newValue)) }
                 )
             )
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("mouse_motion_to_scroll_speed")
-                        .font(.system(.body, design: .monospaced))
-                    Text("Speed multiplier for mouse-to-scroll conversion.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                HStack(spacing: 4) {
-                    Slider(value: speedBinding, in: 0.1...10, step: 0.1)
-                        .frame(width: 80)
-                    Text(String(format: "%.1fx", parameters.mouseMotionToScrollSpeed))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 36)
-                }
-                .frame(width: 140)
-            }
+            parameterSliderRow(
+                icon: "cursorarrow.motionlines",
+                title: "Mouse Motion Scroll Speed",
+                help: "Multiplier for mouse motion to scroll conversion.",
+                value: String(format: "%.1fx", parameters.mouseMotionToScrollSpeed),
+                binding: speedBinding,
+                range: 0.1...10,
+                step: 0.1
+            )
         }
     }
 
-    private func parameterRow(title: String, help: String, unit: String, value: Int, binding: Binding<String>) -> some View {
+    private func parameterSliderRow(icon: String, title: String, help: String, value: String, binding: Binding<Double>, range: ClosedRange<Double>, step: Double) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(.body, design: .monospaced))
-                Text(help)
-                    .font(.caption)
+            HStack(spacing: 4) {
+                Image(systemName: icon)
                     .foregroundStyle(.secondary)
+                    .frame(width: 14)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.body.weight(.medium))
+                    Text(help)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            HStack(spacing: 4) {
+                Slider(value: binding, in: range, step: step)
+                Text(value)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 52, alignment: .leading)
+            }
+            .frame(width: 120)
+        }
+    }
+
+    private func parameterRow(icon: String, title: String, help: String, unit: String, binding: Binding<String>) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.body.weight(.medium))
+                    Text(help)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
             HStack(spacing: 4) {
@@ -1446,8 +1435,11 @@ struct AdditionalTriggerCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.caption)
+                    .foregroundStyle(.blue)
                 Text(trigger.trigger.displayLabel)
-                    .font(.body)
+                    .font(.subheadline)
                     .lineLimit(1)
                 Spacer()
                 Button {
@@ -1460,7 +1452,7 @@ struct AdditionalTriggerCard: View {
                 Button(role: .destructive) {
                     store.removeAdditionalTrigger(trigger.id, from: manipulator.id)
                 } label: {
-                    Image(systemName: "minus.circle")
+                    Image(systemName: "xmark")
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.borderless)
@@ -1470,7 +1462,6 @@ struct AdditionalTriggerCard: View {
             }
         }
         .padding(8)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 

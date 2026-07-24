@@ -22,6 +22,26 @@ struct MenuBarItemsView: View {
                 }
                 .help("Add a new menu bar item")
             }
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    store.importMenuBarItemFromPanel()
+                } label: {
+                    Image(systemName: "tray.and.arrow.down")
+                }
+                .help("Import a menu bar item file (⌘⌥I)")
+
+                Button {
+                    if let id = store.selectedMenuBarItemID {
+                        store.exportMenuBarItem(id)
+                    }
+                } label: {
+                    Image(systemName: "tray.and.arrow.up")
+                }
+                .disabled(store.selectedMenuBarItemID == nil)
+                .help("Export the selected menu bar item (⌘⌥E)")
+
+                ProfileSwitcherButton(store: store)
+            }
         }
     }
 }
@@ -34,9 +54,10 @@ private struct MenuBarItemsSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            searchField
             itemList
         }
-        .frame(minWidth: 200, maxWidth: 380)
+        .frame(minWidth: 280, maxWidth: 380)
         .alert(
             "Delete \"\(itemToDelete?.name ?? "")\"?",
             isPresented: Binding(
@@ -56,41 +77,66 @@ private struct MenuBarItemsSidebar: View {
         }
     }
 
+    private var searchField: some View {
+        HStack {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.tertiary)
+            TextField("Search", text: $store.searchText)
+                .textFieldStyle(.plain)
+            if !store.searchText.isEmpty {
+                Button {
+                    store.searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+    }
+
     private var itemList: some View {
-        Group {
-            if store.menuBarItems.isEmpty {
+        let filteredItems: [MenuBarItem] = {
+            let query = store.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !query.isEmpty else { return store.menuBarItems }
+            return store.menuBarItems.filter { $0.name.lowercased().contains(query) }
+        }()
+
+        return Group {
+            if filteredItems.isEmpty {
                 ContentUnavailableView {
-                    Label("No Menu Bar Items", systemImage: "menubar.rectangle")
+                    Label(store.searchText.isEmpty ? "No Items" : "No Matches", systemImage: "menubar.rectangle")
                 } description: {
-                    Text("Add items to customize your Breadboard menu bar.")
+                    Text(store.searchText.isEmpty ? "Add items to customize the menu bar." : "No items match the current search.")
                 } actions: {
-                    Button("Add Menu Item") {
+                    Button("Add") {
                         store.addMenuBarItem()
                     }
                 }
             } else {
                 List(selection: $store.selectedMenuBarItemID) {
-                    Section("Items (\(store.menuBarItems.count))") {
-                        ForEach(store.menuBarItems) { item in
-                            MenuBarItemRow(store: store, item: item)
-                                .tag(item.id)
-                                .contextMenu {
-                                    contextMenuItems(for: item)
-                                }
-                        }
-                        .onMove { source, dest in
-                            store.moveMenuBarItem(from: source, to: dest)
-                        }
-                        .onDelete { indexSet in
-                            for index in indexSet {
-                                itemToDelete = store.menuBarItems[index]
+                    ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
+                        MenuBarItemRow(store: store, item: item, index: index)
+                            .tag(item.id)
+                            .contextMenu {
+                                contextMenuItems(for: item)
                             }
+                    }
+                    .onMove { source, dest in
+                        store.moveMenuBarItem(from: source, to: dest)
+                    }
+                    .onDelete { indexSet in
+                        for index in indexSet {
+                            itemToDelete = store.menuBarItems[index]
                         }
                     }
                 }
                 .listStyle(.sidebar)
             }
         }
+        .frame(maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -122,8 +168,6 @@ private struct MenuBarItemsSidebar: View {
             Text("Duplicate")
         }
 
-        Divider()
-
         Button(role: .destructive) {
             itemToDelete = item
         } label: {
@@ -137,11 +181,12 @@ private struct MenuBarItemsSidebar: View {
 private struct MenuBarItemRow: View {
     @ObservedObject var store: RemapStore
     let item: MenuBarItem
+    var index: Int = 0
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             if item.isSeparator {
-                Text("—")
+                Image(systemName: "minus")
                     .foregroundStyle(.tertiary)
                     .frame(width: 16)
                 Text("Separator")
@@ -150,23 +195,19 @@ private struct MenuBarItemRow: View {
                 Image(systemName: item.icon)
                     .foregroundStyle(item.isEnabled ? .secondary : .tertiary)
                     .frame(width: 16)
-                Text(item.name)
-                    .foregroundStyle(item.isEnabled ? .primary : .secondary)
-
-                Spacer()
-
-                if !item.isEnabled {
-                    Text("OFF")
+                Text(item.name.isEmpty ? "Untitled" : item.name)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if !item.children.isEmpty {
+                    Text("\(item.children.count)")
                         .font(.caption2)
-                        .foregroundStyle(.red)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(.red.opacity(0.1))
-                        .cornerRadius(3)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 5)
+                        .background(.quaternary, in: Capsule())
                 }
             }
         }
-        .padding(.vertical, 2)
+        .opacity(item.isEnabled ? 1 : 0.5)
     }
 }
 
@@ -176,6 +217,8 @@ private struct MenuBarItemEditorPane: View {
     @ObservedObject var store: RemapStore
     @State private var showIconPicker = false
     @State private var showDeleteConfirmation = false
+    @State private var actionsExpanded = true
+    @State private var subitemsExpanded = true
 
     var body: some View {
         Group {
@@ -216,129 +259,226 @@ private struct MenuBarItemEditorPane: View {
             }
         )
 
-        return VStack(alignment: .leading, spacing: 0) {
-            // Single row: icon + name + enable toggle + delete
-            HStack(spacing: 10) {
-                Button {
-                    showIconPicker.toggle()
-                } label: {
-                    Image(systemName: item.icon)
-                        .font(.title2)
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-                .popover(isPresented: $showIconPicker) {
-                    IconPickerView(item: binding)
-                }
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // ── Header card ──
+                EditorCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 10) {
+                            Button {
+                                showIconPicker.toggle()
+                            } label: {
+                                Image(systemName: item.icon)
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 28, height: 28)
+                                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+                            .popover(isPresented: $showIconPicker) {
+                                IconPickerView(item: binding)
+                            }
 
-                TextField("Name", text: binding.name)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.title3)
+                            TextField("Name", text: binding.name)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.title2.weight(.semibold))
 
-                Toggle("", isOn: binding.isEnabled)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-                    .help(item.isEnabled ? "Enabled" : "Disabled")
+                            Toggle("", isOn: binding.isEnabled)
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                                .labelsHidden()
+                                .help(item.isEnabled ? "Enabled" : "Disabled")
 
-                Button(role: .destructive) {
-                    showDeleteConfirmation = true
-                } label: {
-                    Image(systemName: "trash")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Delete this item")
-            }
-            .padding(.vertical, 12)
-
-            Divider()
-
-            // Actions — inline, no wrapper
-            VStack(alignment: .leading, spacing: 0) {
-                actionRow(
-                    label: "Left Click",
-                    action: Binding(
-                        get: { item.leftClickAction ?? MenuBarItemAction() },
-                        set: { binding.wrappedValue.leftClickAction = $0; store.saveMenuBarItems() }
-                    ),
-                    onClear: { binding.wrappedValue.leftClickAction = nil; store.saveMenuBarItems() }
-                )
-
-                Divider().padding(.leading, 80)
-
-                actionRow(
-                    label: "Right Click (⌥)",
-                    action: Binding(
-                        get: { item.rightClickAction ?? MenuBarItemAction() },
-                        set: { binding.wrappedValue.rightClickAction = $0; store.saveMenuBarItems() }
-                    ),
-                    onClear: { binding.wrappedValue.rightClickAction = nil; store.saveMenuBarItems() }
-                )
-            }
-            .padding(.vertical, 12)
-
-            // Sub-items — inline list
-            if !item.isSeparator && !item.children.isEmpty {
-                Divider()
-
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(item.children.enumerated()), id: \.element.id) { index, child in
-                        if index > 0 { Divider().padding(.leading, 80) }
-                        MenuBarChildRow(
-                            child: child,
-                            parentItem: item,
-                            store: store
-                        )
-                    }
-                }
-                .padding(.vertical, 8)
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 20)
-    }
-
-    // MARK: - Action Row
-
-    private func actionRow(
-        label: String,
-        action: Binding<MenuBarItemAction>,
-        onClear: @escaping () -> Void
-    ) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(label)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .frame(width: 80, alignment: .trailing)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Picker("", selection: action.kind) {
-                        ForEach(MenuBarActionKind.allCases) { kind in
-                            Text(kind.rawValue).tag(kind)
+                            Menu {
+                                Button {
+                                    store.duplicateMenuBarItem(item.id)
+                                } label: {
+                                    Label("Duplicate", systemImage: "doc.on.doc")
+                                }
+                                if !item.isSeparator {
+                                    Button {
+                                        store.toggleMenuBarItemSeparator(item.id)
+                                    } label: {
+                                        Label(item.isSeparator ? "Convert to Item" : "Make Separator", systemImage: "minus")
+                                    }
+                                }
+                                Button(role: .destructive) {
+                                    showDeleteConfirmation = true
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
+                                    .font(.body)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .menuStyle(.borderlessButton)
+                            .fixedSize()
                         }
                     }
-                    .labelsHidden()
-                    .frame(maxWidth: 160)
-
-                    if action.wrappedValue.kind != .none {
-                        Button("Clear", action: onClear)
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.red)
-                            .font(.caption)
-                    }
                 }
 
-                actionParameters(action: action)
-            }
+                if !item.isSeparator {
+                    // ── Click Actions card ──
+                    EditorCard {
+                        CollapsibleStepCard(
+                            title: "Click Actions",
+                            accentColor: .blue,
+                            isExpanded: $actionsExpanded
+                        ) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 10) {
+                                    Text("Left Click")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 100, alignment: .trailing)
 
-            Spacer()
+                                    Picker("", selection: Binding(
+                                        get: { item.leftClickAction?.kind ?? .none },
+                                        set: { newKind in
+                                            if item.leftClickAction == nil {
+                                                binding.wrappedValue.leftClickAction = MenuBarItemAction(kind: newKind)
+                                            } else {
+                                                binding.wrappedValue.leftClickAction?.kind = newKind
+                                            }
+                                            store.saveMenuBarItems()
+                                        }
+                                    )) {
+                                        ForEach(MenuBarActionKind.allCases) { kind in
+                                            Text(kind.rawValue).tag(kind)
+                                        }
+                                    }
+                                    .labelsHidden()
+                                    .frame(maxWidth: 180)
+
+                                    Spacer()
+
+                                    if item.leftClickAction != nil, item.leftClickAction?.kind != .none {
+                                        Button("Clear") {
+                                            binding.wrappedValue.leftClickAction = nil
+                                            store.saveMenuBarItems()
+                                        }
+                                        .buttonStyle(.plain)
+                                        .foregroundStyle(.red)
+                                        .font(.caption)
+                                    }
+                                }
+
+                                if let leftAction = item.leftClickAction, leftAction.kind != .none {
+                                    actionParameters(action: Binding(
+                                        get: { leftAction },
+                                        set: { binding.wrappedValue.leftClickAction = $0; store.saveMenuBarItems() }
+                                    ))
+                                    .padding(.leading, 100)
+                                }
+
+                                HStack(spacing: 10) {
+                                    Text("Right Click (⌥)")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 100, alignment: .trailing)
+
+                                    Picker("", selection: Binding(
+                                        get: { item.rightClickAction?.kind ?? .none },
+                                        set: { newKind in
+                                            if item.rightClickAction == nil {
+                                                binding.wrappedValue.rightClickAction = MenuBarItemAction(kind: newKind)
+                                            } else {
+                                                binding.wrappedValue.rightClickAction?.kind = newKind
+                                            }
+                                            store.saveMenuBarItems()
+                                        }
+                                    )) {
+                                        ForEach(MenuBarActionKind.allCases) { kind in
+                                            Text(kind.rawValue).tag(kind)
+                                        }
+                                    }
+                                    .labelsHidden()
+                                    .frame(maxWidth: 180)
+
+                                    Spacer()
+
+                                    if item.rightClickAction != nil, item.rightClickAction?.kind != .none {
+                                        Button("Clear") {
+                                            binding.wrappedValue.rightClickAction = nil
+                                            store.saveMenuBarItems()
+                                        }
+                                        .buttonStyle(.plain)
+                                        .foregroundStyle(.red)
+                                        .font(.caption)
+                                    }
+                                }
+
+                                if let rightAction = item.rightClickAction, rightAction.kind != .none {
+                                    actionParameters(action: Binding(
+                                        get: { rightAction },
+                                        set: { binding.wrappedValue.rightClickAction = $0; store.saveMenuBarItems() }
+                                    ))
+                                    .padding(.leading, 100)
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Sub-items card ──
+                    EditorCard {
+                        CollapsibleStepCard(
+                            title: "Sub-items",
+                            accentColor: .purple,
+                            isExpanded: $subitemsExpanded
+                        ) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                if item.children.isEmpty {
+                                    Text("No sub-items. Add one to create a submenu.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.vertical, 4)
+                                } else {
+                                    ForEach(Array(item.children.enumerated()), id: \.element.id) { index, child in
+                                        RecursiveChildRow(
+                                            child: child,
+                                            parentChain: [item.id],
+                                            store: store
+                                        )
+                                        if index < item.children.count - 1 {
+                                        }
+                                    }
+                                }
+
+                                Button {
+                                    store.addMenuBarChildItem(to: item.id)
+                                } label: {
+                                    Label("Add Sub-item", systemImage: "plus.circle")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: 640, alignment: .center)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.3))
+        .alert(
+            "Delete \"\(store.selectedMenuBarItem?.name ?? "")\"?",
+            isPresented: $showDeleteConfirmation
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                if let id = store.selectedMenuBarItemID {
+                    store.deleteMenuBarItem(id)
+                }
+            }
+        } message: {
+            Text("This action cannot be undone.")
+        }
     }
+
+    // MARK: - Action Parameters
 
     @ViewBuilder
     private func actionParameters(action: Binding<MenuBarItemAction>) -> some View {
@@ -414,90 +554,411 @@ private struct MenuBarItemEditorPane: View {
     }
 }
 
-// MARK: - Menu Bar Child Row
+// MARK: - Recursive Child Row (supports arbitrary nesting)
 
-private struct MenuBarChildRow: View {
+private struct RecursiveChildRow: View {
     let child: MenuBarItem
-    let parentItem: MenuBarItem
+    /// Chain of parent IDs from the root down to this child's parent.
+    let parentChain: [UUID]
     @ObservedObject var store: RemapStore
     @State private var showIconPicker = false
-    @State private var childToDelete: MenuBarItem?
+    @State private var showDeleteAlert = false
+    @State private var childrenExpanded = true
+    @State private var showActions = false
+
+    private var depth: Int { parentChain.count }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Button {
-                showIconPicker.toggle()
-            } label: {
-                Image(systemName: child.icon)
-                    .frame(width: 16)
-            }
-            .buttonStyle(.plain)
-            .popover(isPresented: $showIconPicker) {
-                IconPickerGrid(icon: Binding(
-                    get: { child.icon },
-                    set: { newIcon in
-                        store.updateMenuBarChildItem(child.id, in: parentItem.id) { $0.icon = newIcon }
+        VStack(alignment: .leading, spacing: 4) {
+            // ── This row ──
+            HStack(spacing: 8) {
+                // Indent line
+                if depth > 1 {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(Color(nsColor: .separatorColor).opacity(0.3))
+                        .frame(width: 2)
+                        .padding(.leading, CGFloat(depth - 1) * 12)
+                }
+
+                // Disclosure chevron if has children
+                if !child.children.isEmpty {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            childrenExpanded.toggle()
+                        }
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(childrenExpanded ? 90 : 0))
+                            .frame(width: 12)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Spacer().frame(width: 12)
+                }
+
+                // Icon
+                Button {
+                    showIconPicker.toggle()
+                } label: {
+                    Image(systemName: child.icon)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16)
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showIconPicker) {
+                    IconPickerGrid(icon: Binding(
+                        get: { child.icon },
+                        set: { newIcon in
+                            _ = store.recursiveUpdateMenuBarItem(child.id, in: &store.menuBarItems) { $0.icon = newIcon }
+                        }
+                    ))
+                }
+
+                // Name
+                TextField("Name", text: Binding(
+                    get: { child.name },
+                    set: { newValue in
+                        _ = store.recursiveUpdateMenuBarItem(child.id, in: &store.menuBarItems) { $0.name = newValue }
                     }
                 ))
-            }
+                .textFieldStyle(.roundedBorder)
+                .font(.subheadline)
 
-            TextField("Name", text: Binding(
-                get: { child.name },
-                set: { newValue in
-                    store.updateMenuBarChildItem(child.id, in: parentItem.id) { $0.name = newValue }
+                // Action summary badge
+                if child.hasLeftAction || child.hasRightAction {
+                    Button {
+                        showActions.toggle()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "cursorarrow.click")
+                                .font(.caption2)
+                            Text(child.hasLeftAction ? "L" : "")
+                                .font(.caption2.weight(.medium))
+                            if child.hasRightAction {
+                                Text("R")
+                                    .font(.caption2.weight(.medium))
+                            }
+                        }
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Edit actions")
+                    .popover(isPresented: $showActions, arrowEdge: .trailing) {
+                        ChildActionEditor(
+                            childID: child.id,
+                            store: store
+                        )
+                    }
+                } else {
+                    Button {
+                        showActions.toggle()
+                    } label: {
+                        Image(systemName: "cursorarrow.click")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .frame(width: 16)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Configure actions")
+                    .popover(isPresented: $showActions, arrowEdge: .trailing) {
+                        ChildActionEditor(
+                            childID: child.id,
+                            store: store
+                        )
+                    }
                 }
-            ))
-            .textFieldStyle(.plain)
 
-            Spacer()
+                Spacer()
 
-            Toggle("", isOn: Binding(
-                get: { child.isEnabled },
-                set: { _ in store.updateMenuBarChildItem(child.id, in: parentItem.id) { $0.isEnabled.toggle() } }
-            ))
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .labelsHidden()
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .contextMenu {
-            Button {
-                store.updateMenuBarChildItem(child.id, in: parentItem.id) { $0.isEnabled.toggle() }
-            } label: {
-                Text(child.isEnabled ? "Disable" : "Enable")
+                // Enable toggle
+                Toggle("", isOn: Binding(
+                    get: { child.isEnabled },
+                    set: { _ in
+                        _ = store.recursiveUpdateMenuBarItem(child.id, in: &store.menuBarItems) { $0.isEnabled.toggle() }
+                    }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+
+                // Context menu
+                Menu {
+                    Button {
+                        _ = store.recursiveUpdateMenuBarItem(child.id, in: &store.menuBarItems) { $0.isEnabled.toggle() }
+                    } label: {
+                        Text(child.isEnabled ? "Disable" : "Enable")
+                    }
+                    Button {
+                        store.addMenuBarChildItem(to: child.id)
+                    } label: {
+                        Text("Add Sub-item")
+                    }
+                    Divider()
+                    Button {
+                        showActions = true
+                    } label: {
+                        Text("Configure Actions…")
+                    }
+                    Divider()
+                    Button(role: .destructive) {
+                        showDeleteAlert = true
+                    } label: {
+                        Text("Delete")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .foregroundStyle(.tertiary)
+                        .font(.caption)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
+            .padding(.vertical, 4)
+            .padding(.leading, CGFloat(depth - 1) * 10)
+            .opacity(child.isEnabled ? 1 : 0.5)
 
-            Button {
-                store.addMenuBarChildItem(to: child.id)
-            } label: {
-                Text("Add Sub-item")
-            }
+            // ── Nested children ──
+            if !child.children.isEmpty, childrenExpanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(child.children.enumerated()), id: \.element.id) { index, nestedChild in
+                        RecursiveChildRow(
+                            child: nestedChild,
+                            parentChain: parentChain + [child.id],
+                            store: store
+                        )
+                        if index < child.children.count - 1 {
+                        }
+                    }
 
-            Divider()
 
-            Button(role: .destructive) {
-                childToDelete = child
-            } label: {
-                Text("Delete")
+                    Button {
+                        store.addMenuBarChildItem(to: child.id)
+                    } label: {
+                        Label("Add Sub-item", systemImage: "plus.circle")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.leading, CGFloat(depth) * 14 + 44)
+                    .padding(.vertical, 2)
+                }
+                .padding(.leading, 20)
             }
         }
         .alert(
-            "Delete \"\(childToDelete?.name ?? "")\"?",
-            isPresented: Binding(
-                get: { childToDelete != nil },
-                set: { if !$0 { childToDelete = nil } }
-            )
+            "Delete \"\(child.name)\"?",
+            isPresented: $showDeleteAlert
         ) {
-            Button("Cancel", role: .cancel) { childToDelete = nil }
+            Button("Cancel", role: .cancel) { }
             Button("Delete", role: .destructive) {
-                if let id = childToDelete?.id {
-                    store.deleteMenuBarChildItem(id, from: parentItem.id)
+                if let parentID = parentChain.last {
+                    store.deleteMenuBarChildItem(child.id, from: parentID)
                 }
-                childToDelete = nil
+            }
+        } message: {
+            Text("This cannot be undone.")
+        }
+    }
+}
+
+// MARK: - Child Action Editor (popover for sub-item actions)
+
+private enum ActionSide { case left, right }
+
+private struct ChildActionEditor: View {
+    let childID: UUID
+    @ObservedObject var store: RemapStore
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Actions")
+                .font(.subheadline.weight(.semibold))
+
+            actionRow(label: "Left Click", side: .left)
+
+            actionRow(label: "Right Click (⌥)", side: .right)
+        }
+        .padding(14)
+        .frame(width: 340)
+    }
+
+    // MARK: - Action Row
+
+    private func actionRow(label: String, side: ActionSide) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(label)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 90, alignment: .trailing)
+
+                Picker("", selection: actionKindBinding(side: side)) {
+                    ForEach(MenuBarActionKind.allCases) { k in
+                        Text(k.rawValue).tag(k)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 150)
+
+                if currentAction(side: side).kind != .none {
+                    Button("Clear") {
+                        setAction(side: side, to: nil)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.red)
+                    .font(.caption)
+                }
+
+                Spacer()
+            }
+
+            if currentAction(side: side).kind != .none {
+                ActionParamsView(
+                    action: currentAction(side: side),
+                    onChange: { newAction in
+                        setAction(side: side, to: newAction)
+                    },
+                    store: store
+                )
+                .padding(.leading, 90)
             }
         }
     }
+
+    // MARK: - Helpers
+
+    private func currentAction(side: ActionSide) -> MenuBarItemAction {
+        guard let child = findChild(id: childID, in: store.menuBarItems) else { return MenuBarItemAction() }
+        switch side {
+        case .left:  return child.leftClickAction ?? MenuBarItemAction()
+        case .right: return child.rightClickAction ?? MenuBarItemAction()
+        }
+    }
+
+    private func actionKindBinding(side: ActionSide) -> Binding<MenuBarActionKind> {
+        Binding(
+            get: { currentAction(side: side).kind },
+            set: { newKind in
+                _ = store.recursiveUpdateMenuBarItem(childID, in: &store.menuBarItems) { item in
+                    switch side {
+                    case .left:
+                        if item.leftClickAction == nil {
+                            item.leftClickAction = MenuBarItemAction(kind: newKind)
+                        } else {
+                            item.leftClickAction?.kind = newKind
+                        }
+                    case .right:
+                        if item.rightClickAction == nil {
+                            item.rightClickAction = MenuBarItemAction(kind: newKind)
+                        } else {
+                            item.rightClickAction?.kind = newKind
+                        }
+                    }
+                }
+            }
+        )
+    }
+
+    private func setAction(side: ActionSide, to action: MenuBarItemAction?) {
+        _ = store.recursiveUpdateMenuBarItem(childID, in: &store.menuBarItems) { item in
+            switch side {
+            case .left:  item.leftClickAction = action
+            case .right: item.rightClickAction = action
+            }
+        }
+    }
+}
+
+// MARK: - Standalone Action Parameters View
+
+private struct ActionParamsView: View {
+    let action: MenuBarItemAction
+    let onChange: (MenuBarItemAction) -> Void
+    @ObservedObject var store: RemapStore
+
+    var body: some View {
+        switch action.kind {
+        case .none:
+            EmptyView()
+        case .runShortcut:
+            TextField("Shortcut name", text: binding(\.shortcutName, default: ""), prompt: Text("e.g. Open Browser"))
+                .textFieldStyle(.roundedBorder)
+        case .runShell:
+            TextField("Command", text: binding(\.shellCommand, default: ""), prompt: Text("e.g. echo hello"), axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .font(.body.monospaced())
+        case .openApp:
+            HStack(spacing: 6) {
+                TextField("Bundle ID", text: binding(\.appBundleID, default: ""), prompt: Text("com.apple.Safari"))
+                    .textFieldStyle(.roundedBorder)
+                TextField("App Name", text: binding(\.appName, default: ""), prompt: Text("Safari"))
+                    .textFieldStyle(.roundedBorder)
+            }
+        case .openURL:
+            TextField("URL", text: binding(\.urlString, default: ""), prompt: Text("https://example.com"))
+                .textFieldStyle(.roundedBorder)
+        case .sendKey:
+            HStack(spacing: 6) {
+                TextField("Key", text: binding(\.toKey, default: ""), prompt: Text("a, space, return"))
+                    .textFieldStyle(.roundedBorder)
+            }
+        case .setVariable:
+            HStack(spacing: 6) {
+                TextField("Variable", text: binding(\.variableName, default: ""), prompt: Text("myVar"))
+                    .textFieldStyle(.roundedBorder)
+                TextField("Value", text: binding(\.variableValue, default: ""), prompt: Text("some value"))
+                    .textFieldStyle(.roundedBorder)
+            }
+        case .toggleVariable:
+            TextField("Variable", text: binding(\.variableName, default: ""), prompt: Text("myVar"))
+                .textFieldStyle(.roundedBorder)
+        case .incrementVariable:
+            HStack(spacing: 6) {
+                TextField("Variable", text: binding(\.variableName, default: ""), prompt: Text("counter"))
+                    .textFieldStyle(.roundedBorder)
+                TextField("Step", text: binding(\.variableValue, default: ""), prompt: Text("1"))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 60)
+            }
+        case .setNotification:
+            TextField("Message", text: binding(\.notificationMessage, default: ""), prompt: Text("Hello!"), axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+        case .openFile:
+            TextField("File path", text: binding(\.filePath, default: ""), prompt: Text("~/Documents"))
+                .textFieldStyle(.roundedBorder)
+        case .runAppleScript:
+            TextEditor(text: binding(\.scriptBody, default: ""))
+                .font(.caption.monospaced())
+                .frame(minHeight: 60, maxHeight: 100)
+                .border(.quaternary)
+        }
+    }
+
+    private func binding(_ keyPath: WritableKeyPath<MenuBarItemAction, String>, default: String) -> Binding<String> {
+        Binding(
+            get: { action[keyPath: keyPath] },
+            set: { newValue in
+                var copy = action
+                copy[keyPath: keyPath] = newValue
+                onChange(copy)
+            }
+        )
+    }
+}
+
+/// Find a child by ID in the tree recursively.
+private func findChild(id: UUID, in items: [MenuBarItem]) -> MenuBarItem? {
+    for item in items {
+        if item.id == id { return item }
+        if let found = findChild(id: id, in: item.children) { return found }
+    }
+    return nil
 }
 
 // MARK: - Icon Picker (reusable grid)

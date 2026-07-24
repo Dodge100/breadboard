@@ -3,10 +3,23 @@ import SwiftUI
 struct ManipulatorEditorView: View {
     @ObservedObject var store: RemapStore
     let manipulator: Manipulator
-    @State private var showActionLibrary = false
+    @State private var activeLibrary: ActiveLibrary? = nil
+    @State private var replacingActionID: UUID? = nil
+    @State private var replacingConditionID: UUID? = nil
+    @State private var triggerExpanded = true
+    @State private var conditionsExpanded = true
+    @State private var actionsExpanded = true
+    @State private var parametersExpanded = false
+    @State private var notesExpanded = true
+
+    private enum ActiveLibrary {
+        case action
+        case condition
+    }
 
     var body: some View {
         listContent
+            .background(Color(nsColor: .windowBackgroundColor).opacity(0.3))
     }
 
     // MARK: - List Layout
@@ -14,34 +27,75 @@ struct ManipulatorEditorView: View {
     private var listContent: some View {
         HStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 16) {
                     headerSection
                     
-                    VStack(alignment: .leading, spacing: 16) {
+                    // Trigger card
+                    EditorCard {
                         triggerSection
+                    }
+                    
+                    // Conditions card
+                    EditorCard {
                         conditionsSection
+                    }
+                    
+                    // Actions card
+                    EditorCard {
                         actionsSection
                     }
                     
-                    VStack(alignment: .leading, spacing: 16) {
+                    // Parameters card
+                    EditorCard {
                         parametersSection
+                    }
+                    
+                    // Notes card
+                    EditorCard {
                         notesSection
                     }
                 }
-                .padding(20)
-                .frame(maxWidth: 720, alignment: .leading)
+                .padding(16)
+                .frame(maxWidth: 720, alignment: .center)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
-            // Action Library slide-in panel
-            if showActionLibrary {
-                ActionLibraryPanel(isPresented: $showActionLibrary) { kind in
-                    store.updateManipulator(manipulator.id) { $0.actions.append(Action(kind: kind)) }
+            // Library slide-in panel
+            if activeLibrary == .action {
+                ActionLibraryPanel(isPresented: Binding(
+                    get: { activeLibrary == .action },
+                    set: { if !$0 { activeLibrary = nil } }
+                )) { kind in
+                    if let replaceID = replacingActionID {
+                        store.updateAction(replaceID, in: manipulator.id) { $0.kind = kind }
+                        replacingActionID = nil
+                    } else {
+                        store.updateManipulator(manipulator.id) { $0.actions.append(Action(kind: kind)) }
+                    }
+                }
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+
+            if activeLibrary == .condition {
+                ConditionLibraryPanel(isPresented: Binding(
+                    get: { activeLibrary == .condition },
+                    set: { if !$0 { activeLibrary = nil } }
+                )) { kind in
+                    if let replaceID = replacingConditionID {
+                        store.updateCondition(replaceID, in: manipulator.id) { $0.kind = kind }
+                        replacingConditionID = nil
+                    } else {
+                        store.updateManipulator(manipulator.id) {
+                            var condition = Condition()
+                            condition.kind = kind
+                            $0.conditions.append(condition)
+                        }
+                    }
                 }
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: showActionLibrary)
+        .animation(.easeInOut(duration: 0.25), value: activeLibrary)
     }
 
 
@@ -51,16 +105,16 @@ struct ManipulatorEditorView: View {
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                TextField("Manipulator name", text: nameBinding)
+                TextField("Name", text: nameBinding)
                     .font(.title2.weight(.semibold))
-                    .textFieldStyle(.plain)
+                    .textFieldStyle(.roundedBorder)
                 Spacer()
                 Toggle("", isOn: enabledBinding)
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()
             }
-            TextField("Folder (optional)", text: folderBinding)
+            TextField("Folder", text: folderBinding)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 200)
             TagEditorField(store: store, manipulator: manipulator)
@@ -68,8 +122,8 @@ struct ManipulatorEditorView: View {
     }
 
     private var triggerSection: some View {
-        StepCard(title: "Trigger") {
-            VStack(alignment: .leading, spacing: 12) {
+        CollapsibleStepCard(title: "Trigger", accentColor: .blue, isExpanded: $triggerExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
                 // Single unified trigger type selector
                 Picker("Type", selection: unifiedTriggerTypeBinding) {
                     ForEach(UnifiedTriggerType.allCases) { type in
@@ -81,22 +135,18 @@ struct ManipulatorEditorView: View {
 
                 // Description for special types
                 if unifiedTriggerType == .mouseMotionToScroll {
-                    Text("Converts mouse movement into scroll events. Configure speed in Parameters.")
+                    Text("Converts mouse movement into scroll events.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 // Trigger configuration based on type
                 if unifiedTriggerType != .mouseMotionToScroll {
-                    Divider()
                     triggerConfiguration
                 }
                 
-                // Additional triggers (merged into main trigger section)
-                if !manipulator.additionalTriggers.isEmpty {
-                    Divider()
-                    additionalTriggersContent
-                }
+                // Additional triggers
+                additionalTriggersContent
             }
         }
     }
@@ -115,9 +165,11 @@ struct ManipulatorEditorView: View {
             Button {
                 store.addAdditionalTrigger(to: manipulator.id)
             } label: {
-                Text("Add Another Trigger").font(.body)
+                Label("Add Another Trigger", systemImage: "plus")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
         }
     }
 
@@ -141,7 +193,7 @@ struct ManipulatorEditorView: View {
             case .typedString:
                 typedStringTriggerEditor
             case .anyKey:
-                Text("Matches any key press. Use conditions to narrow the context.")
+                Text("Matches any key press.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             case .mouseMotionToScroll:
@@ -294,7 +346,6 @@ struct ManipulatorEditorView: View {
 
             // Modifier info for selected step
             if let firstStep = manipulator.trigger.steps.first, !firstStep.key.isEmpty {
-                Divider()
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Modifier matching")
                         .font(.caption.weight(.medium))
@@ -326,7 +377,6 @@ struct ManipulatorEditorView: View {
 
             // Simultaneous chord trigger
             if manipulator.trigger.steps.isEmpty {
-                Divider()
                 Button("Add simultaneous (chord) trigger") {
                     store.updateManipulator(manipulator.id) {
                         $0.trigger.simultaneous = SimultaneousTrigger(keys: [])
@@ -372,7 +422,6 @@ struct ManipulatorEditorView: View {
 
     @ViewBuilder
     private var hotKeyTriggerEditor: some View {
-        Divider()
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text("Hot Key Behavior")
@@ -553,7 +602,7 @@ struct ManipulatorEditorView: View {
 
     private var typedStringTriggerEditor: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Type a string to match. When the typed text matches, the manipulator fires.")
+            Text("Type a string to match.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -634,12 +683,13 @@ struct ManipulatorEditorView: View {
 
     @ViewBuilder
     private var conditionsSection: some View {
-        StepCard(title: "Only if") {
-            VStack(alignment: .leading, spacing: 8) {
+        CollapsibleStepCard(title: "Only if", accentColor: .orange, isExpanded: $conditionsExpanded) {
+            VStack(alignment: .leading, spacing: 6) {
                 if manipulator.conditions.isEmpty {
                     Text("No conditions. This manipulator will fire in any context.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
                 } else {
                     ForEach(manipulator.conditions) { condition in
                         ConditionStepRow(
@@ -649,36 +699,40 @@ struct ManipulatorEditorView: View {
                             },
                             onDelete: {
                                 store.removeCondition(condition.id, from: manipulator.id)
+                            },
+                            onChangeKind: {
+                                replacingConditionID = condition.id
+                                withAnimation { activeLibrary = .condition }
                             }
                         )
-                    }
-                }
-                AddStepMenu(
-                    label: "Add condition",
-                    items: ConditionKind.allCases.map { kind in
-                        AddStepMenu.Item(id: kind.rawValue, title: kind.rawValue)
-                    },
-                    action: { item in
-                        let kind = ConditionKind(rawValue: item.id) ?? .frontmostApp
-                        store.updateManipulator(manipulator.id) { manipulator in
-                            var condition = Condition()
-                            condition.kind = kind
-                            manipulator.conditions.append(condition)
+                        .cardStyle()
+                        if condition.id != manipulator.conditions.last?.id {
+                            Divider().padding(.leading, 36)
                         }
                     }
-                )
+                }
+                Button {
+                    withAnimation { activeLibrary = .condition }
+                } label: {
+                    Label("Add condition", systemImage: "plus.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
             }
         }
     }
 
     @ViewBuilder
     private var actionsSection: some View {
-        StepCard(title: "Do") {
-            VStack(alignment: .leading, spacing: 8) {
+        CollapsibleStepCard(title: "Do", accentColor: .green, isExpanded: $actionsExpanded) {
+            VStack(alignment: .leading, spacing: 6) {
                 if manipulator.actions.isEmpty {
                     Text("No actions. Add one to make this manipulator do something.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
                 } else {
                     ForEach(manipulator.actions) { action in
                         ActionStepRow(
@@ -689,33 +743,33 @@ struct ManipulatorEditorView: View {
                             },
                             onDelete: {
                                 store.removeAction(action.id, from: manipulator.id)
+                            },
+                            onChangeKind: {
+                                replacingActionID = action.id
+                                withAnimation { activeLibrary = .action }
                             }
                         )
+                        .cardStyle()
+                        if action.id != manipulator.actions.last?.id {
+                            Divider().padding(.leading, 36)
+                        }
                     }
                 }
                 Button {
-                    withAnimation { showActionLibrary = true }
+                    withAnimation { activeLibrary = .action }
                 } label: {
-                    Label("Add action", systemImage: "plus")
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(Color.accentColor)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .strokeBorder(Color.accentColor.opacity(0.2), lineWidth: 1)
-                        )
+                    Label("Add action", systemImage: "plus.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .padding(.top, 4)
             }
         }
     }
 
-    // Note: Additional triggers are now merged into the main trigger section above
-
     private var parametersSection: some View {
-        StepCard(title: "Parameters") {
+        CollapsibleStepCard(title: "Parameters", accentColor: .purple, isExpanded: $parametersExpanded) {
             ManipulatorParametersEditor(
                 parameters: manipulator.parameters,
                 onChange: { newParams in
@@ -726,7 +780,7 @@ struct ManipulatorEditorView: View {
     }
 
     private var notesSection: some View {
-        StepCard(title: "Description") {
+        CollapsibleStepCard(title: "Description", accentColor: .gray, isExpanded: $notesExpanded) {
             TextField("Optional notes for this manipulator", text: notesBinding, axis: .vertical)
                 .lineLimit(2...6)
                 .textFieldStyle(.roundedBorder)
@@ -873,19 +927,99 @@ struct ManipulatorEditorView: View {
 
 // MARK: - Step card shell
 
-struct StepCard<Content: View>: View {
-    let title: String
+// MARK: - Editor Card (used to wrap each section)
+
+struct EditorCard<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        content()
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(.separator.opacity(0.5), lineWidth: 1)
+            )
+    }
+}
+
+// MARK: - Card style modifier (for individual rows)
+
+struct CardStyleModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(8)
+            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(.separator.opacity(0.3), lineWidth: 0.5)
+            )
+    }
+}
+
+extension View {
+    func cardStyle() -> some View {
+        modifier(CardStyleModifier())
+    }
+}
+
+// MARK: - Step card shell
+
+struct StepCard<Content: View>: View {
+    let title: String
+    var accentColor: Color = .secondary
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.headline)
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
             content()
         }
-        .padding(12)
-        .background(.background.tertiary, in: RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Collapsible Step Card
+
+struct CollapsibleStepCard<Content: View>: View {
+    let title: String
+    var accentColor: Color = .secondary
+    @Binding var isExpanded: Bool
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    content()
+                }
+                .padding(.top, 8)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -927,7 +1061,7 @@ struct TriggerStepBadge: View {
     var body: some View {
         HStack(spacing: 4) {
             Text(step.displayLabel)
-                .font(.system(.body, design: .monospaced))
+                .font(.body.monospaced())
             Button {
                 onDelete()
             } label: {
@@ -938,11 +1072,7 @@ struct TriggerStepBadge: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(.background.tertiary, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(.separator, lineWidth: 1)
-        )
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
     }
 }
 
@@ -964,28 +1094,17 @@ struct TagEditorField: View {
                         Image(systemName: "xmark")
                             .font(.caption2)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                    .overlay(Capsule().stroke(Color.accentColor.opacity(0.4), lineWidth: 1))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.quaternary, in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
-            HStack(spacing: 4) {
-                TextField("Add tag", text: $newTag)
-                    .textFieldStyle(.plain)
-                    .font(.caption)
-                    .frame(minWidth: 60)
-                    .onSubmit { addCurrentTag() }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(.gray.opacity(0.12)))
-            if !newTag.isEmpty {
-                Button("Add") { addCurrentTag() }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
-            }
+            TextField("Add tag", text: $newTag)
+                .textFieldStyle(.plain)
+                .font(.caption)
+                .frame(minWidth: 60)
+                .onSubmit { addCurrentTag() }
         }
     }
 

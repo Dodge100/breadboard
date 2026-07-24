@@ -1,4 +1,4 @@
-import ApplicationServices
+import CoreGraphics
 import Carbon.HIToolbox
 
 enum KeyboardKeyCodeMap {

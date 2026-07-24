@@ -3,18 +3,19 @@ import SwiftUI
 // MARK: - Floating Macro Palette
 
 /// A floating palette view that lists all enabled manipulators and allows
-/// triggering them by clicking.  Designed to be hosted inside an NSPanel
+/// triggering them by clicking or keyboard.  Designed to be hosted inside an NSPanel
 /// (floating, always-on-top).
 struct MacroPaletteView: View {
     @ObservedObject var store: RemapStore
     @State private var searchText = ""
+    @State private var selectedIndex: Int = 0
     @FocusState private var isSearchFocused: Bool
 
-    /// Manipulators that are enabled and have at least one configured action.
-    private var paletteItems: [Manipulator] {
+    /// All items displayed in the flat list (favorites first, then rest).
+    private var displayItems: [Manipulator] {
         let base = store.debouncedFilteredManipulators
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return base
+        let filtered = base
             .filter { $0.isEnabled && $0.trigger.isValid && $0.actions.contains(where: \.isConfigured) }
             .filter { manipulator in
                 guard !query.isEmpty else { return true }
@@ -23,47 +24,95 @@ struct MacroPaletteView: View {
                     || manipulator.actions.contains { $0.summary.lowercased().contains(query) }
                     || manipulator.tags.contains { $0.lowercased().contains(query) }
             }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        // Sort: starred first, then alphabetical
+        return filtered.sorted { a, b in
+            if a.isStarred != b.isStarred { return a.isStarred && !b.isStarred }
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
     }
 
-    /// Group items by first tag (or "General" if no tags).
-    private var groupedItems: [(String, [Manipulator])] {
-        var groups: [String: [Manipulator]] = [:]
-        for item in paletteItems {
+    /// Items grouped by star status + tags.
+    private struct SectionGroup: Identifiable {
+        let id: String
+        let title: String
+        let items: [Manipulator]
+    }
+
+    private var sections: [SectionGroup] {
+        guard searchText.isEmpty else { return [SectionGroup(id: "_all", title: "Results", items: displayItems)] }
+
+        let starred = displayItems.filter(\.isStarred)
+        let unstarred = displayItems.filter { !$0.isStarred }
+
+        var groups: [SectionGroup] = []
+        if !starred.isEmpty {
+            groups.append(SectionGroup(id: "_starred", title: "Favorites", items: starred))
+        }
+
+        // Group remaining by first tag
+        var tagGroups: [String: [Manipulator]] = [:]
+        for item in unstarred {
             let group = item.tags.sorted().first ?? "General"
-            groups[group, default: []].append(item)
+            tagGroups[group, default: []].append(item)
+        }
+        for (tag, items) in tagGroups.sorted(by: { $0.key < $1.key }) {
+            groups.append(SectionGroup(id: tag, title: tag, items: items))
         }
         return groups
-            .sorted { $0.key < $1.key }
-    }
-
-    private var shouldShowGroups: Bool {
-        groupedItems.count > 1 && searchText.isEmpty
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Search bar (top)
-            SearchBar(text: $searchText, isFocused: $isSearchFocused)
-                .padding(.top, 8)
-                .padding(.horizontal, 12)
+            // ── Search bar ──
+            searchBar
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
 
-            Divider()
-                .padding(.top, 8)
-
-            // Content
-            if paletteItems.isEmpty {
+            // ── Content ──
+            if displayItems.isEmpty {
                 emptyState
-            } else if shouldShowGroups {
-                groupedContent
             } else {
-                flatContent
+                listContent
             }
         }
-        .background(.background)
-        .frame(minWidth: 320, idealWidth: 360, minHeight: 280, idealHeight: 420)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: 340, idealWidth: 380, minHeight: 300, idealHeight: 460)
         .onAppear {
             isSearchFocused = true
+        }
+    }
+
+    // MARK: - Search Bar
+
+    private var searchBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.tertiary)
+                .font(.subheadline)
+
+            TextField("Search macros…", text: $searchText)
+                .textFieldStyle(.plain)
+                .focused($isSearchFocused)
+
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+        )
+        .onChange(of: searchText) { _ in
+            selectedIndex = 0
         }
     }
 
@@ -73,108 +122,161 @@ struct MacroPaletteView: View {
         VStack(spacing: 12) {
             Spacer()
             Image(systemName: "command.square")
-                .font(.system(size: 40))
+                .font(.system(size: 36))
                 .foregroundStyle(.tertiary)
-            VStack(spacing: 4) {
-                Text(searchText.isEmpty ? "No Macros Available" : "No Matching Macros")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Text(searchText.isEmpty
-                    ? "Enable macros in the editor to see them here."
-                    : "Try a different search term.")
-                    .font(.subheadline)
+            Text(searchText.isEmpty ? "No Macros" : "No Matches")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            if searchText.isEmpty {
+                Text("Create and enable manipulators with actions\nto see them here.")
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
             }
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Grouped Content
+    // MARK: - List Content
 
-    private var groupedContent: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                ForEach(groupedItems, id: \.0) { group, items in
-                    GroupHeader(title: group)
-                    ForEach(items) { manipulator in
-                        PaletteItemRow(store: store, manipulator: manipulator)
+    private var listContent: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(sections) { section in
+                        if section.title != "Results" {
+                            SectionHeader(title: section.title)
+                        }
+
+                        ForEach(Array(section.items.enumerated()), id: \.element.id) { offset, manipulator in
+                            let globalIndex = globalIndex(for: section, offset: offset)
+                            PaletteItemRow(
+                                store: store,
+                                manipulator: manipulator,
+                                isSelected: globalIndex == selectedIndex,
+                                onTrigger: { triggerItem(manipulator) },
+                                onToggleStar: { store.toggleStarred(manipulator.id) }
+                            )
+                            .id(manipulator.id)
+                            .onTapGesture {
+                                triggerItem(manipulator)
+                            }
+                        }
                     }
                 }
+                .padding(.vertical, 6)
             }
-            .padding(.vertical, 6)
+            .onReceive(NotificationCenter.default.publisher(for: .init("keyboardNavigation"))) { notification in
+                // Handled via key event monitor below
+            }
+            .background(
+                // Keyboard event handling via representable
+                KeyEventHandler { event in
+                    handleKeyEvent(event, proxy: proxy)
+                }
+            )
         }
     }
 
-    // MARK: - Flat Content
+    // MARK: - Helpers
 
-    private var flatContent: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(paletteItems) { manipulator in
-                    PaletteItemRow(store: store, manipulator: manipulator)
-                }
+    private func globalIndex(for section: SectionGroup, offset: Int) -> Int {
+        var idx = 0
+        for s in sections {
+            if s.id == section.id { return idx + offset }
+            idx += s.items.count
+        }
+        return idx + offset
+    }
+
+    private var totalCount: Int {
+        sections.reduce(0) { $0 + $1.items.count }
+    }
+
+    private func handleKeyEvent(_ event: NSEvent, proxy: ScrollViewProxy) -> Bool {
+        switch event.keyCode {
+        case 125: // Down arrow
+            if selectedIndex < totalCount - 1 {
+                selectedIndex += 1
+                scrollToSelection(proxy)
             }
-            .padding(.vertical, 6)
+            return true
+        case 126: // Up arrow
+            if selectedIndex > 0 {
+                selectedIndex -= 1
+                scrollToSelection(proxy)
+            }
+            return true
+        case 36, 76: // Return / Enter
+            if displayItems.indices.contains(selectedIndex) {
+                triggerItem(displayItems[selectedIndex])
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func scrollToSelection(_ proxy: ScrollViewProxy) {
+        guard displayItems.indices.contains(selectedIndex) else { return }
+        let item = displayItems[selectedIndex]
+        withAnimation(.easeOut(duration: 0.15)) {
+            proxy.scrollTo(item.id, anchor: .center)
+        }
+    }
+
+    private func triggerItem(_ manipulator: Manipulator) {
+        store.executeManipulatorFromPalette(manipulator)
+    }
+}
+
+// MARK: - Key Event Handler (NSViewRepresentable)
+
+private struct KeyEventHandler: NSViewRepresentable {
+    let handler: (NSEvent) -> Bool
+
+    func makeNSView(context: Context) -> NSView {
+        let view = KeyView()
+        view.handler = handler
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private class KeyView: NSView {
+        var handler: ((NSEvent) -> Bool)?
+
+        override var acceptsFirstResponder: Bool { true }
+
+        override func keyDown(with event: NSEvent) {
+            if handler?(event) == true { return }
+            super.keyDown(with: event)
         }
     }
 }
 
-// MARK: - Search Bar
+// MARK: - Section Header
 
-private struct SearchBar: View {
-    @Binding var text: String
-    var isFocused: FocusState<Bool>.Binding
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.tertiary)
-                .font(.body)
-
-            TextField("Search macros…", text: $text)
-                .textFieldStyle(.plain)
-                .font(.body)
-                .focused(isFocused)
-                .onSubmit {}
-
-            if !text.isEmpty {
-                Button {
-                    text = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .transition(.scale.combined(with: .opacity))
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(isFocused.wrappedValue ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
-        )
-        .animation(.easeInOut(duration: 0.15), value: isFocused.wrappedValue)
-    }
-}
-
-// MARK: - Group Header
-
-private struct GroupHeader: View {
+private struct SectionHeader: View {
     let title: String
 
     var body: some View {
-        HStack {
-            Text(title.uppercased())
+        HStack(spacing: 5) {
+            if title == "Favorites" {
+                Image(systemName: "star.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.yellow)
+            }
+            Text(title)
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
             Spacer()
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .padding(.top, 4)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
     }
 }
 
@@ -183,8 +285,9 @@ private struct GroupHeader: View {
 private struct PaletteItemRow: View {
     @ObservedObject var store: RemapStore
     let manipulator: Manipulator
-    @State private var isHovering = false
-    @State private var wasJustTriggered = false
+    let isSelected: Bool
+    let onTrigger: () -> Void
+    let onToggleStar: () -> Void
 
     private var primaryActionSummary: String? {
         manipulator.actions.first(where: { $0.isConfigured })?.summary
@@ -192,34 +295,31 @@ private struct PaletteItemRow: View {
 
     var body: some View {
         Button {
-            store.executeManipulatorFromPalette(manipulator)
-            withAnimation(.easeOut(duration: 0.6)) {
-                wasJustTriggered = true
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                withAnimation(.easeIn(duration: 0.3)) {
-                    wasJustTriggered = false
-                }
-            }
+            onTrigger()
         } label: {
             HStack(spacing: 10) {
-                // Trigger key icon
-                ZStack {
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(Color.accentColor.opacity(isHovering ? 0.18 : 0.10))
-                    Text(triggerKeyLabel)
-                        .font(.system(.caption2, design: .rounded).weight(.bold))
-                        .foregroundStyle(Color.accentColor)
+                // Star toggle
+                Button {
+                    onToggleStar()
+                } label: {
+                    Image(systemName: manipulator.isStarred ? "star.fill" : "star")
+                        .font(.caption)
+                        .foregroundStyle(manipulator.isStarred ? Color.yellow : Color(nsColor: .tertiaryLabelColor))
+                        .frame(width: 16)
                 }
-                .frame(width: 28, height: 22)
+                .buttonStyle(.plain)
+                .help(manipulator.isStarred ? "Unfavorite" : "Favorite")
+                Text(triggerKeyLabel)
+                    .font(.caption2.monospaced().weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 22)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
 
-                // Text content
+                // Name + summary
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(manipulator.name.isEmpty ? "Untitled Macro" : manipulator.name)
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(.primary)
+                    Text(manipulator.name.isEmpty ? "Untitled" : manipulator.name)
+                        .font(.subheadline)
                         .lineLimit(1)
-
                     if let summary = primaryActionSummary {
                         Text(summary)
                             .font(.caption)
@@ -230,46 +330,39 @@ private struct PaletteItemRow: View {
 
                 Spacer(minLength: 4)
 
-                // Keyboard shortcut hint
+                // Keyboard shortcut display
                 let shortcut = manipulator.trigger.displayLabel
                 if !shortcut.isEmpty && shortcut != "Not recorded" {
                     Text(shortcut)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
                         .lineLimit(1)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 4))
                 }
-
-                // Chevron on hover
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.primary)
-                    .opacity(isHovering ? 1 : 0)
-                    .frame(width: 12)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(
-                        wasJustTriggered
-                            ? Color.accentColor.opacity(0.15)
-                            : isHovering
-                                ? Color.accentColor.opacity(0.08)
-                                : Color.clear
-                    )
-            )
+            .padding(.vertical, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.12)) {
-                isHovering = hovering
-            }
-        }
+        .background(
+            isSelected
+                ? Color.accentColor.opacity(0.12)
+                : Color.clear,
+            in: RoundedRectangle(cornerRadius: 6)
+        )
+        .overlay(
+            isSelected
+                ? RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.accentColor.opacity(0.4), lineWidth: 1)
+                : nil
+        )
+        .padding(.horizontal, 6)
         .contextMenu {
+            Button {
+                onToggleStar()
+            } label: {
+                Label(manipulator.isStarred ? "Unfavorite" : "Favorite", systemImage: "star")
+            }
             Button("Edit in Editor") {
                 store.selectManipulator(manipulator.id)
                 store.hideMacroPalette()
@@ -288,7 +381,6 @@ private struct PaletteItemRow: View {
     }
 
     private var triggerKeyLabel: String {
-        // Show the key type symbol for non-keyboard, or the first key label
         if manipulator.trigger.keyType != .keyboard {
             return manipulator.trigger.keyType.symbol
         }

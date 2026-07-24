@@ -6,7 +6,6 @@ import SwiftUI
 struct ConfigProfileManagerView: View {
     @ObservedObject var store: RemapStore
     @Environment(\.dismiss) private var dismiss
-    @State private var isSheet: Bool = false
 
     @State private var showRenameAlert = false
     @State private var renameTarget: ConfigProfile?
@@ -17,10 +16,10 @@ struct ConfigProfileManagerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header with close button
+            // ── Header ──
             HStack {
                 Text("Profiles")
-                    .font(.headline)
+                    .font(.title3.weight(.semibold))
                 Spacer()
                 Button("Done") {
                     dismiss()
@@ -29,8 +28,6 @@ struct ConfigProfileManagerView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-
-            Divider()
 
             if store.profiles.isEmpty {
                 Spacer()
@@ -43,7 +40,8 @@ struct ConfigProfileManagerView: View {
                         let profile = ConfigProfile.default()
                         store.profiles.append(profile)
                         store.activeProfileID = profile.id
-                        store.manipulators = Manipulator.defaults()
+                        store.manipulators = []
+                        store.menuBarItems = MenuBarItem.defaults()
                         store.saveProfilesManifest()
                         store.saveConfig()
                         store.applyRemaps()
@@ -55,7 +53,7 @@ struct ConfigProfileManagerView: View {
                 profileList
             }
 
-            // ── Footer ────────────────────────────────────────────
+            // ── Footer ──
             HStack(spacing: 8) {
                 Button {
                     createProfile()
@@ -79,7 +77,7 @@ struct ConfigProfileManagerView: View {
             .padding(.vertical, 10)
             .background(.quaternary.opacity(0.3))
         }
-        .frame(minWidth: 380, minHeight: 300)
+        .frame(minWidth: 400, minHeight: 320)
         .alert("Rename Profile", isPresented: $showRenameAlert) {
             TextField("Name", text: $renameText)
             Button("Rename") {
@@ -120,29 +118,35 @@ struct ConfigProfileManagerView: View {
     // MARK: - Profile List
 
     private var profileList: some View {
-        List {
-            ForEach(store.profiles) { profile in
-                ProfileRow(
-                    profile: profile,
-                    isActive: profile.id == store.activeProfileID,
-                    onSwitch: { store.switchProfile(to: profile.id) },
-                    onRename: {
-                        renameTarget = profile
-                        renameText = profile.name
-                        showRenameAlert = true
-                    },
-                    onDuplicate: { store.duplicateProfile(profile.id) },
-                    onDelete: {
-                        deleteTarget = profile
-                        showDeleteAlert = true
-                    },
-                    onChangeIcon: { icon in
-                        store.updateProfileIcon(profile.id, icon: icon)
-                    }
-                )
+        ScrollView {
+            LazyVStack(spacing: 6) {
+                ForEach(store.profiles) { profile in
+                    ProfileCard(
+                        profile: profile,
+                        isActive: profile.id == store.activeProfileID,
+                        onSwitch: { store.switchProfile(to: profile.id) },
+                        onRename: {
+                            renameTarget = profile
+                            renameText = profile.name
+                            showRenameAlert = true
+                        },
+                        onDuplicate: { store.duplicateProfile(profile.id) },
+                        onDelete: {
+                            deleteTarget = profile
+                            showDeleteAlert = true
+                        },
+                        onChangeIcon: { icon in
+                            store.updateProfileIcon(profile.id, icon: icon)
+                        },
+                        onChangeColor: { colorName in
+                            store.updateProfileColor(profile.id, colorName: colorName)
+                        }
+                    )
+                }
             }
+            .padding(12)
         }
-        .listStyle(.inset(alternatesRowBackgrounds: true))
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.3))
     }
 
     // MARK: - Create Profile
@@ -153,9 +157,9 @@ struct ConfigProfileManagerView: View {
     }
 }
 
-// MARK: - Profile Row
+// MARK: - Profile Card
 
-private struct ProfileRow: View {
+private struct ProfileCard: View {
     let profile: ConfigProfile
     let isActive: Bool
     let onSwitch: () -> Void
@@ -163,6 +167,7 @@ private struct ProfileRow: View {
     let onDuplicate: () -> Void
     let onDelete: () -> Void
     let onChangeIcon: (String) -> Void
+    let onChangeColor: (String) -> Void
 
     @State private var showIconPicker = false
 
@@ -174,25 +179,37 @@ private struct ProfileRow: View {
             } label: {
                 Image(systemName: profile.icon)
                     .font(.body)
-                    .foregroundStyle(isActive ? Color.accentColor : .secondary)
-                    .frame(width: 20, height: 20)
+                    .foregroundStyle(isActive ? .white : profile.accentColor)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        isActive ? profile.accentColor : profile.accentColor.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
             }
             .buttonStyle(.plain)
             .popover(isPresented: $showIconPicker, arrowEdge: .trailing) {
-                iconPickerPopover
+                iconAndColorPickerPopover
             }
 
             // Name
             Text(profile.name)
+                .font(.body)
                 .lineLimit(1)
 
             Spacer()
 
-            // Active indicator or switch button
+            // Active badge or switch button
             if isActive {
-                Text("Active")
-                    .font(.caption)
-                    .foregroundStyle(Color.accentColor)
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption)
+                    Text("Active")
+                        .font(.caption)
+                }
+                .foregroundStyle(profile.accentColor)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(profile.accentColor.opacity(0.1), in: Capsule())
             } else {
                 Button("Switch") {
                     onSwitch()
@@ -214,18 +231,20 @@ private struct ProfileRow: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 8)
-        .background(isActive ? Color.accentColor.opacity(0.06) : Color.clear)
-        .cornerRadius(6)
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(isActive ? profile.accentColor.opacity(0.5) : Color(nsColor: .separatorColor).opacity(0.5), lineWidth: isActive ? 1.5 : 1)
+        )
     }
 
     // MARK: - Icon Picker Popover
 
-    private var iconPickerPopover: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Choose an icon")
-                .font(.caption.weight(.medium))
+    private var iconAndColorPickerPopover: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Icon")
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 4)
 
@@ -238,16 +257,43 @@ private struct ProfileRow: View {
                         Image(systemName: icon)
                             .font(.title3)
                             .frame(width: 32, height: 32)
-                            .background(profile.icon == icon ? Color.accentColor.opacity(0.15) : Color.clear)
+                            .background(profile.icon == icon ? profile.accentColor.opacity(0.15) : Color.clear)
                             .cornerRadius(6)
                     }
                     .buttonStyle(.plain)
                     .help(icon)
                 }
             }
-            .padding(8)
+
+            Divider()
+
+            Text("Color")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 6), spacing: 6) {
+                ForEach(ConfigProfile.availableColors, id: \.name) { item in
+                    Button {
+                        onChangeColor(item.name)
+                        showIconPicker = false
+                    } label: {
+                        Circle()
+                            .fill(item.color)
+                            .frame(width: 24, height: 24)
+                            .overlay(
+                                Circle().strokeBorder(
+                                    profile.colorName == item.name ? Color.primary : Color.clear,
+                                    lineWidth: 2
+                                )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(item.name)
+                }
+            }
         }
-        .padding(8)
+        .padding(10)
         .frame(width: 260)
     }
 }
@@ -258,41 +304,125 @@ private struct ProfileRow: View {
 /// with a dropdown menu to switch or manage profiles.
 struct ProfileSwitcherButton: View {
     @ObservedObject var store: RemapStore
+    @State private var showPopover = false
     @State private var showManager = false
 
     var body: some View {
         if let active = store.activeProfile {
-            Menu {
-                Section {
-                    ForEach(store.profiles) { profile in
-                        Button {
-                            store.switchProfile(to: profile.id)
-                        } label: {
-                            Text(profile.name)
-                            if profile.id == active.id {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-
-                Divider()
-
-                Button {
-                    showManager = true
-                } label: {
-                    Text("Manage Profiles\u{2026}")
-                }
+            Button {
+                showPopover.toggle()
             } label: {
-                Text(active.name)
-                    .font(.callout)
+                HStack(spacing: 4) {
+                    Image(systemName: active.icon)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(active.accentColor)
+                    Text(active.name)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 1)
+                )
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
+            .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+                profilePopover
+            }
             .help("Switch or manage config profiles")
             .sheet(isPresented: $showManager) {
                 ConfigProfileManagerView(store: store)
             }
         }
+    }
+
+    private var profilePopover: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // ── Header ──
+            Text("Profiles")
+                .font(.headline)
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+
+            // ── Profile list ──
+            ScrollView {
+                LazyVStack(spacing: 4) {
+                    ForEach(store.profiles) { profile in
+                        let isActive = profile.id == store.activeProfileID
+                        Button {
+                            store.switchProfile(to: profile.id)
+                            showPopover = false
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: profile.icon)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(isActive ? .white : profile.accentColor)
+                                    .frame(width: 26, height: 26)
+                                    .background(
+                                        isActive ? profile.accentColor : profile.accentColor.opacity(0.12),
+                                        in: RoundedRectangle(cornerRadius: 6)
+                                    )
+
+                                Text(profile.name)
+                                    .font(.body)
+                                    .lineLimit(1)
+
+                                Spacer()
+
+                                if isActive {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(profile.accentColor)
+                                        .font(.system(size: 13))
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(
+                                isActive
+                                    ? Color(nsColor: .controlBackgroundColor)
+                                    : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 8)
+                            )
+                            .overlay(
+                                Group {
+                                    if isActive {
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+                                    }
+                                }
+                            )
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 8)
+            }
+            .frame(maxHeight: 260)
+
+            Divider()
+
+            // ── Footer ──
+            Button {
+                showPopover = false
+                showManager = true
+            } label: {
+                Label("Manage Profiles\u{2026}", systemImage: "gearshape")
+                    .font(.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color(nsColor: .windowBackgroundColor).opacity(0.2))
+        }
+        .frame(width: 240)
     }
 }

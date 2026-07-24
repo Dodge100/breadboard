@@ -1,4 +1,4 @@
-import ApplicationServices
+import CoreGraphics
 import Foundation
 import SwiftUI
 
@@ -138,6 +138,8 @@ struct ConfigProfile: Identifiable, Codable, Equatable {
     var name: String
     /// SF Symbol name used as the profile's icon in the picker UI.
     var icon: String = "person"
+    /// Color name for visual accent.
+    var colorName: String = "accent"
 
     static let availableIcons: [String] = [
         "person", "briefcase", "gamecontroller", "pencil",
@@ -147,6 +149,27 @@ struct ConfigProfile: Identifiable, Codable, Equatable {
         "cursorarrow", "textformat.abc", "dock.rectangle", "terminal",
         "apple.logo", "sun.max", "moon", "sparkles"
     ]
+
+    /// Available profile accent colors.
+    static let availableColors: [(name: String, color: Color)] = [
+        ("accent", .accentColor),
+        ("red", .red),
+        ("orange", .orange),
+        ("yellow", .yellow),
+        ("green", .green),
+        ("mint", .mint),
+        ("teal", .teal),
+        ("cyan", .cyan),
+        ("blue", .blue),
+        ("indigo", .indigo),
+        ("purple", .purple),
+        ("pink", .pink)
+    ]
+
+    /// Resolved color from colorName.
+    var accentColor: Color {
+        Self.availableColors.first(where: { $0.name == colorName })?.color ?? .accentColor
+    }
 
     /// A default profile for initial use.
     static func `default`() -> ConfigProfile {
@@ -158,6 +181,20 @@ struct ConfigProfile: Identifiable, Codable, Equatable {
 struct ProfilesManifest: Codable {
     var profiles: [ConfigProfile]
     var activeProfileID: UUID
+}
+
+/// Per-profile data stored on disk for each profile.
+/// Each profile file contains both manipulators and menu bar items.
+struct ProfileData: Codable {
+    var manipulators: [Manipulator]
+    var menuBarItems: [MenuBarItem]
+
+    static func `default`() -> ProfileData {
+        ProfileData(
+            manipulators: [],
+            menuBarItems: MenuBarItem.defaults()
+        )
+    }
 }
 
 /// Errors that can occur during profile operations.
@@ -1780,6 +1817,7 @@ enum ManipulatorType: String, CaseIterable, Identifiable, Codable {
 struct Manipulator: Identifiable, Equatable, Codable {
     var id = UUID()
     var name: String = "New Manipulator"
+    var isStarred: Bool = false
     var notes: String = ""
     var folder: String = ""
     var isEnabled: Bool = true
@@ -1791,7 +1829,7 @@ struct Manipulator: Identifiable, Equatable, Codable {
     var parameters: ManipulatorParameters = .init()
     var additionalTriggers: [AdditionalTrigger] = []
 
-    init(id: UUID = UUID(), name: String = "New Manipulator", notes: String = "", folder: String = "", isEnabled: Bool = true, tags: Set<String> = [], manipulatorType: ManipulatorType = .basic, trigger: ManipulatorTrigger = .init(), conditions: [Condition] = [], actions: [Action] = [Action()], parameters: ManipulatorParameters = .init(), additionalTriggers: [AdditionalTrigger] = []) {
+    init(id: UUID = UUID(), name: String = "New Manipulator", notes: String = "", folder: String = "", isEnabled: Bool = true, tags: Set<String> = [], manipulatorType: ManipulatorType = .basic, trigger: ManipulatorTrigger = .init(), conditions: [Condition] = [], actions: [Action] = [], parameters: ManipulatorParameters = .init(), additionalTriggers: [AdditionalTrigger] = []) {
         self.id = id
         self.name = name
         self.notes = notes

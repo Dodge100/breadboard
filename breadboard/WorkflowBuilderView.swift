@@ -18,10 +18,10 @@ struct WorkflowBuilderView: View {
             VStack(spacing: 0) {
                 // ── Header badge ──
                 HStack(spacing: 6) {
-                    Image(systemName: "flowchart")
-                        .foregroundStyle(.tint)
+                    Image(systemName: "arrow.triangle.branch")
+                        .foregroundStyle(.secondary)
                     Text("Flow View")
-                        .font(.subheadline.weight(.medium))
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -228,16 +228,10 @@ private struct WorkflowTriggerNode: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(.blue.opacity(0.1), in: Capsule())
+                    .background(.quaternary, in: Capsule())
             }
         }
-        .padding(12)
-        .background(.background, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.accentColor.opacity(0.4), lineWidth: 1.5)
-        )
-        .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
+        .padding(10)
     }
 }
 
@@ -286,15 +280,7 @@ private struct WorkflowConditionNode: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.indigo.opacity(isHovered ? 0.1 : 0.06))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.indigo.opacity(0.3), lineWidth: 1)
-        )
+        .padding(8)
         .onHover { isHovered = $0 }
         .cursor(.openHand)
         .padding(.horizontal, 4)
@@ -367,15 +353,7 @@ private struct WorkflowActionNode: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(color.opacity(isHovered ? 0.12 : 0.07))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(color.opacity(0.3), lineWidth: 1)
-        )
+        .padding(8)
         .onHover { isHovered = $0 }
         .cursor(.openHand)
         .padding(.horizontal, 4)
@@ -416,14 +394,9 @@ private struct WorkflowActionNode: View {
 
 private struct WorkflowArrow: View {
     var body: some View {
-        VStack(spacing: 2) {
-            Capsule()
-                .fill(.separator)
-                .frame(width: 2, height: 14)
-            Image(systemName: "arrowtriangle.down.fill")
-                .font(.system(size: 7))
-                .foregroundStyle(.separator)
-        }
+        Image(systemName: "arrowtriangle.down.fill")
+            .font(.system(size: 8))
+            .foregroundStyle(.tertiary)
     }
 }
 

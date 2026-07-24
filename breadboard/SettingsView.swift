@@ -15,7 +15,7 @@ struct SettingsView: View {
                     Label("Profiles", systemImage: "square.on.square")
                 }
         }
-        .frame(width: 450, height: 300)
+                .frame(width: 450, height: 300)
     }
 }
 
@@ -23,18 +23,29 @@ struct SettingsView: View {
 
 private struct GeneralSettingsView: View {
     @ObservedObject var store: RemapStore
+    @AppStorage("showInMenuBar") private var showInMenuBar = true
 
     var body: some View {
         Form {
             Section {
                 Toggle("Launch at Login", isOn: Binding(
-                    get: { false },
-                    set: { _ in /* TODO: Implement launch at login */ }
+                    get: { DaemonManager.isInstalled },
+                    set: { newValue in
+                        if newValue {
+                            DaemonManager.install()
+                        } else {
+                            DaemonManager.uninstall()
+                        }
+                    }
                 ))
-                Toggle("Show in Menu Bar", isOn: Binding(
-                    get: { true },
-                    set: { _ in /* TODO: Implement menu bar visibility */ }
-                ))
+                Toggle("Show in Menu Bar", isOn: $showInMenuBar)
+                    .onChange(of: showInMenuBar) { newValue in
+                        if newValue {
+                            StatusBarController.shared.rebuildAll()
+                        } else {
+                            StatusBarController.shared.removeAll()
+                        }
+                    }
             }
 
             Section {

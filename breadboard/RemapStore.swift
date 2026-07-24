@@ -25,6 +25,9 @@ final class RemapStore: ObservableObject {
     @Published var selectedManipulatorID: UUID?
     @Published var searchText: String = ""
     @Published var selectedTags: Set<String> = []
+    @Published var toastMessage: String? = nil
+
+    private var toastTask: Task<Void, Never>?
 
     /// Debounced filtered results to avoid recomputing on every keystroke.
     @Published private(set) var debouncedFilteredManipulators: [Manipulator] = []
@@ -162,7 +165,6 @@ final class RemapStore: ObservableObject {
 
     static let statusURL: URL = appSupportURL.appendingPathComponent("status.json")
     static let globalVarsURL: URL = appSupportURL.appendingPathComponent("global_vars.json")
-    static let menuBarItemsURL: URL = appSupportURL.appendingPathComponent("menu_bar_items.json")
 
     init(engine: KeyboardRemapEngine? = nil, daemonMode: Bool = false) {
         self.engine = engine ?? KeyboardRemapEngine()
@@ -173,14 +175,17 @@ final class RemapStore: ObservableObject {
         self.profiles = loadedProfiles
         self.activeProfileID = loadedActiveID
 
-        // ── Load manipulators from the active profile ────────────────
-        if let profileConfig = Self.loadProfileConfig(id: loadedActiveID) {
-            self.manipulators = profileConfig
+        // ── Load from active profile ────────────────────────────────
+        if let profileData = Self.loadProfileData(id: loadedActiveID) {
+            self.manipulators = profileData.manipulators
+            self.menuBarItems = profileData.menuBarItems
         } else if daemonMode {
             // Fall back to the legacy config.json
-            self.manipulators = Self.loadConfig() ?? Manipulator.defaults()
+            self.manipulators = Self.loadConfig() ?? []
+            self.menuBarItems = []
         } else {
-            self.manipulators = Manipulator.defaults()
+            self.manipulators = []
+            self.menuBarItems = MenuBarItem.defaults()
         }
 
         if !daemonMode {
@@ -247,8 +252,7 @@ final class RemapStore: ObservableObject {
             self.debouncedFilteredManipulators = self.computeFilteredManipulators()
         }
 
-        // Load menu bar items
-        self.menuBarItems = Self.loadMenuBarItems()
+
     }
 
     deinit {
@@ -267,9 +271,6 @@ final class RemapStore: ObservableObject {
         configFileSource = nil
     }
 
-    // MARK: - Derived state
-
-    /// Cached tags and folders, invalidated when manipulators change.
     // MARK: - Menu Bar Items
 
     @Published var menuBarItems: [MenuBarItem] = []
@@ -280,7 +281,7 @@ final class RemapStore: ObservableObject {
         return menuBarItems.first { $0.id == id }
     }
 
-    // MARK: - Derived state
+    // MARK: - Derived State
 
     @Published private var _allTags: [String] = []
     @Published private var _allFolders: [String] = []
@@ -292,12 +293,6 @@ final class RemapStore: ObservableObject {
     private func rebuildTagFolderCache() {
         _allTags = Array(Set(manipulators.flatMap(\.tags))).sorted()
         _allFolders = Array(Set(manipulators.map(\.folder).filter { !$0.isEmpty })).sorted()
-    }
-
-    /// Compute filtered manipulators without debounce (used for immediate feedback on small changes).
-    /// Prefer `debouncedFilteredManipulators` for search-driven views.
-    var filteredManipulators: [Manipulator] {
-        computeFilteredManipulators()
     }
 
     /// Core filtering logic, extracted for reuse with debounce.
@@ -450,12 +445,12 @@ final class RemapStore: ObservableObject {
 
     func addActionToSelected() {
         pushUndo()
-        updateSelectedManipulator { $0.actions.append(Action()) }
+        updateSelectedManipulator { $0.actions.append(Action(kind: .sendKey)) }
     }
 
     func addActionTo(_ manipulatorID: UUID) {
         pushUndo()
-        updateManipulator(manipulatorID) { $0.actions.append(Action()) }
+        updateManipulator(manipulatorID) { $0.actions.append(Action(kind: .sendKey)) }
     }
 
     func addAction(_ kind: ActionKind, to manipulatorID: UUID) {
@@ -543,16 +538,60 @@ final class RemapStore: ObservableObject {
     }
 
     func addMenuBarChildItem(to parentID: UUID) {
-        guard let index = menuBarItems.firstIndex(where: { $0.id == parentID }) else { return }
+        guard let index = menuBarItems.firstIndex(where: { $0.id == parentID }) else {
+            // Try deeper nesting
+            addNestedMenuBarChildItem(to: parentID, in: &menuBarItems)
+            return
+        }
         let child = MenuBarItem(name: "Sub Item")
         objectWillChange.send()
         menuBarItems[index].children.append(child)
         saveMenuBarItemsImmediate()
     }
 
+    /// Recursively find a parent by ID and add a child.
+    private func addNestedMenuBarChildItem(to parentID: UUID, in items: inout [MenuBarItem]) -> Bool {
+        for i in items.indices {
+            if items[i].id == parentID {
+                let child = MenuBarItem(name: "Sub Item")
+                objectWillChange.send()
+                items[i].children.append(child)
+                saveMenuBarItemsImmediate()
+                return true
+            }
+            if addNestedMenuBarChildItem(to: parentID, in: &items[i].children) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Recursively find and update a child at any depth.
+    func recursiveUpdateMenuBarItem(_ childID: UUID, in items: inout [MenuBarItem], _ transform: (inout MenuBarItem) -> Void) -> Bool {
+        for i in items.indices {
+            if items[i].id == childID {
+                objectWillChange.send()
+                transform(&items[i])
+                scheduleSaveMenuBarItems()
+                return true
+            }
+            if recursiveUpdateMenuBarItem(childID, in: &items[i].children, transform) {
+                return true
+            }
+        }
+        return false
+    }
+
     func updateMenuBarChildItem(_ childID: UUID, in parentID: UUID, _ transform: (inout MenuBarItem) -> Void) {
-        guard let parentIndex = menuBarItems.firstIndex(where: { $0.id == parentID }) else { return }
-        guard let childIndex = menuBarItems[parentIndex].children.firstIndex(where: { $0.id == childID }) else { return }
+        guard let parentIndex = menuBarItems.firstIndex(where: { $0.id == parentID }) else {
+            // Try deeper
+            _ = recursiveUpdateMenuBarItem(childID, in: &menuBarItems, transform)
+            return
+        }
+        guard let childIndex = menuBarItems[parentIndex].children.firstIndex(where: { $0.id == childID }) else {
+            _ = recursiveUpdateMenuBarItem(childID, in: &menuBarItems, transform)
+            return
+        }
         objectWillChange.send()
         transform(&menuBarItems[parentIndex].children[childIndex])
         scheduleSaveMenuBarItems()
@@ -569,10 +608,33 @@ final class RemapStore: ObservableObject {
     }
 
     func deleteMenuBarChildItem(_ childID: UUID, from parentID: UUID) {
-        guard let parentIndex = menuBarItems.firstIndex(where: { $0.id == parentID }) else { return }
+        guard let parentIndex = menuBarItems.firstIndex(where: { $0.id == parentID }) else {
+            _ = recursiveDeleteMenuBarChildItem(childID, in: &menuBarItems)
+            return
+        }
         objectWillChange.send()
-        menuBarItems[parentIndex].children.removeAll { $0.id == childID }
-        saveMenuBarItemsImmediate()
+        if menuBarItems[parentIndex].children.contains(where: { $0.id == childID }) {
+            menuBarItems[parentIndex].children.removeAll { $0.id == childID }
+            saveMenuBarItemsImmediate()
+        } else {
+            _ = recursiveDeleteMenuBarChildItem(childID, in: &menuBarItems)
+        }
+    }
+
+    /// Recursively find and delete a child at any depth.
+    private func recursiveDeleteMenuBarChildItem(_ childID: UUID, in items: inout [MenuBarItem]) -> Bool {
+        for i in items.indices {
+            if items[i].id == childID {
+                objectWillChange.send()
+                items.remove(at: i)
+                saveMenuBarItemsImmediate()
+                return true
+            }
+            if recursiveDeleteMenuBarChildItem(childID, in: &items[i].children) {
+                return true
+            }
+        }
+        return false
     }
 
     func moveMenuBarItem(from source: IndexSet, to destination: Int) {
@@ -698,6 +760,12 @@ final class RemapStore: ObservableObject {
         }
     }
 
+    func toggleStarred(_ manipulatorID: UUID) {
+        pushUndo()
+        updateManipulatorCosmetic(manipulatorID) { $0.isStarred.toggle() }
+        saveConfig()
+    }
+
     // MARK: - Config Profile CRUD
 
     /// Create a new empty profile and switch to it.
@@ -705,39 +773,41 @@ final class RemapStore: ObservableObject {
         pushUndo()
         let profile = ConfigProfile(name: name, icon: icon)
         profiles.append(profile)
-        // Save current manipulators into the old profile first
+        // Save current manipulators + menu bar items into the old profile first
         saveConfig()
         // Switch to the new profile with fresh defaults
         activeProfileID = profile.id
-        manipulators = Manipulator.defaults()
+        manipulators = []
+        menuBarItems = MenuBarItem.defaults()
         selectedManipulatorID = nil
         saveProfilesManifest()
         saveConfig()
         mirrorToConfigJSON()
         applyRemaps()
+        NotificationCenter.default.post(name: .menuBarItemsDidChange, object: nil)
     }
 
     /// Switch to a different profile, saving the current state first.
     func switchProfile(to id: UUID) {
         guard id != activeProfileID, profiles.contains(where: { $0.id == id }) else { return }
         pushUndo()
-        // Save current manipulators into the outgoing profile
+        // Save current data into the outgoing profile
         saveConfig()
-        // Load the incoming profile's manipulators
+        // Load the incoming profile's data
         activeProfileID = id
         saveProfilesManifest()
-        if let loaded = Self.loadProfileConfig(id: id) {
-            manipulators = loaded
+        if let loaded = Self.loadProfileData(id: id) {
+            manipulators = loaded.manipulators
+            menuBarItems = loaded.menuBarItems
         } else {
-            // Profile file doesn't exist yet (newly created profile, no data saved)
-            manipulators = Manipulator.defaults()
+            // Profile file doesn't exist yet
+            manipulators = []
+            menuBarItems = MenuBarItem.defaults()
         }
         selectedManipulatorID = manipulators.first?.id
-        // Mirror to config.json for backward compatibility
-        if let encoder = try? JSONEncoder().encode(manipulators) {
-            try? encoder.write(to: Self.configURL)
-        }
+        mirrorToConfigJSON()
         applyRemaps()
+        NotificationCenter.default.post(name: .menuBarItemsDidChange, object: nil)
     }
 
     /// Rename a profile.
@@ -754,20 +824,26 @@ final class RemapStore: ObservableObject {
         saveProfilesManifest()
     }
 
+    func updateProfileColor(_ id: UUID, colorName: String) {
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { return }
+        profiles[index].colorName = colorName
+        saveProfilesManifest()
+    }
+
     /// Duplicate a profile and optionally give it a new name.
     func duplicateProfile(_ id: UUID, newName: String? = nil) {
         guard let sourceProfile = profiles.first(where: { $0.id == id }),
-              let sourceConfig = Self.loadProfileConfig(id: id) else { return }
+              let sourceData = Self.loadProfileData(id: id) else { return }
         let newProfile = ConfigProfile(
             name: newName ?? "\(sourceProfile.name) Copy",
             icon: sourceProfile.icon
         )
         profiles.append(newProfile)
-        // Save the duplicated manipulators into the new profile's file
+        // Save the duplicated data into the new profile's file
         Self.ensureAppSupportDirectory()
         try? FileManager.default.createDirectory(at: Self.profilesDirectoryURL, withIntermediateDirectories: true)
-        if let encoder = try? JSONEncoder().encode(sourceConfig) {
-            try? encoder.write(to: Self.profileConfigURL(for: newProfile.id))
+        if let encoded = try? JSONEncoder().encode(sourceData) {
+            try? encoded.write(to: Self.profileConfigURL(for: newProfile.id))
         }
         saveProfilesManifest()
     }
@@ -795,13 +871,16 @@ final class RemapStore: ObservableObject {
             if let first = profiles.first {
                 activeProfileID = first.id
                 saveProfilesManifest()
-                if let loaded = Self.loadProfileConfig(id: first.id) {
-                    manipulators = loaded
+                if let loaded = Self.loadProfileData(id: first.id) {
+                    manipulators = loaded.manipulators
+                    menuBarItems = loaded.menuBarItems
                 } else {
-                    manipulators = Manipulator.defaults()
+                    manipulators = []
+                    menuBarItems = MenuBarItem.defaults()
                 }
                 selectedManipulatorID = manipulators.first?.id
                 applyRemaps()
+                NotificationCenter.default.post(name: .menuBarItemsDidChange, object: nil)
             }
         } else {
             saveProfilesManifest()
@@ -845,22 +924,32 @@ final class RemapStore: ObservableObject {
         try? data.write(to: Self.profilesManifestURL)
     }
 
-    /// Load a specific profile's manipulator config from disk.
-    static func loadProfileConfig(id: UUID) -> [Manipulator]? {
+    /// Load a specific profile's data (manipulators + menu bar items) from disk.
+    /// Backward‑compatible: if the file is an old‑format `[Manipulator]` array, it converts to `ProfileData`.
+    static func loadProfileData(id: UUID) -> ProfileData? {
         let url = profileConfigURL(for: id)
         guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode([Manipulator].self, from: data)
+        // Try new format first (ProfileData)
+        if let profileData = try? JSONDecoder().decode(ProfileData.self, from: data) {
+            return profileData
+        }
+        // Fall back to old format [Manipulator]
+        if let manipulators = try? JSONDecoder().decode([Manipulator].self, from: data) {
+            return ProfileData(manipulators: manipulators, menuBarItems: MenuBarItem.defaults())
+        }
+        return nil
     }
 
     // MARK: - Config persistence
 
-    /// Save manipulators to the active profile's dedicated file.
+    /// Save manipulators and menu bar items to the active profile's dedicated file.
     /// config.json mirror is written lazily — only on profile switch or app launch
     /// — to avoid double-I/O on every change.
     func saveConfig() {
+        let profileData = ProfileData(manipulators: manipulators, menuBarItems: menuBarItems)
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
-        guard let data = try? encoder.encode(manipulators) else { return }
+        guard let data = try? encoder.encode(profileData) else { return }
 
         // Save to active profile file only
         Self.ensureAppSupportDirectory()
@@ -878,7 +967,7 @@ final class RemapStore: ObservableObject {
 
     private func scheduleSaveConfig() {
         saveConfigTask?.cancel()
-        let manipulators = self.manipulators
+        let profileData = ProfileData(manipulators: manipulators, menuBarItems: menuBarItems)
         let profileURL = Self.profileConfigURL(for: activeProfileID)
         let appSupportURL = Self.appSupportURL
         let profilesDirectoryURL = Self.profilesDirectoryURL
@@ -887,7 +976,7 @@ final class RemapStore: ObservableObject {
             guard !Task.isCancelled else { return }
             let encoder = JSONEncoder()
             encoder.outputFormatting = .prettyPrinted
-            guard let data = try? encoder.encode(manipulators) else { return }
+            guard let data = try? encoder.encode(profileData) else { return }
             try? FileManager.default.createDirectory(at: appSupportURL, withIntermediateDirectories: true)
             try? FileManager.default.createDirectory(at: profilesDirectoryURL, withIntermediateDirectories: true)
             try? data.write(to: profileURL)
@@ -911,7 +1000,9 @@ final class RemapStore: ObservableObject {
         saveMenuBarItemsTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 300_000_000) // 300ms debounce
             guard let self, !Task.isCancelled else { return }
-            self.saveMenuBarItems()
+            // Save menu bar items into the active profile
+            self.saveConfig()
+            NotificationCenter.default.post(name: .menuBarItemsDidChange, object: nil)
         }
     }
 
@@ -932,27 +1023,13 @@ final class RemapStore: ObservableObject {
 
     // MARK: - Menu Bar Items Persistence
 
-    static func loadMenuBarItems() -> [MenuBarItem] {
-        guard let data = try? Data(contentsOf: menuBarItemsURL),
-              let config = try? JSONDecoder().decode(MenuBarItemsConfig.self, from: data) else {
-            return MenuBarItem.defaults()
-        }
-        return config.items
-    }
-
     func saveMenuBarItems() {
         scheduleSaveMenuBarItems()
     }
 
-    /// Immediately persist menu bar items to disk (for structural changes).
+    /// Immediately persist menu bar items to the active profile file.
     private func saveMenuBarItemsImmediate() {
-        let config = MenuBarItemsConfig(items: menuBarItems)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .prettyPrinted
-        guard let data = try? encoder.encode(config) else { return }
-        Self.ensureAppSupportDirectory()
-        try? data.write(to: Self.menuBarItemsURL)
-        // Notify the app to rebuild the menu bar
+        saveConfig()
         NotificationCenter.default.post(name: .menuBarItemsDidChange, object: nil)
     }
 
@@ -997,8 +1074,9 @@ final class RemapStore: ObservableObject {
 
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if let loaded = Self.loadProfileConfig(id: self.activeProfileID) {
-                    self.manipulators = loaded
+                if let loaded = Self.loadProfileData(id: self.activeProfileID) {
+                    self.manipulators = loaded.manipulators
+                    self.menuBarItems = loaded.menuBarItems
                     self.objectWillChange.send()
                     self.applyRemaps()
                 }
@@ -1153,13 +1231,49 @@ final class RemapStore: ObservableObject {
         stopToKeyCapture()
     }
 
-    // MARK: - Import / Export
+    // MARK: - Menu Bar Item Import / Export
+
+    /// Export a menu bar item by ID using the save panel.
+    @MainActor
+    func exportMenuBarItem(_ id: UUID) {
+        guard let item = menuBarItems.first(where: { $0.id == id }) else { return }
+        if MenuBarItemFile.export(item) {
+            showToast("Exported \"\(item.name)\"")
+        }
+    }
+
+    /// Show an open panel and import a menu bar item from a file.
+    @MainActor
+    func importMenuBarItemFromPanel() {
+        guard let imported = MenuBarItemFile.importSingle() else { return }
+        menuBarItems.append(imported)
+        selectedMenuBarItemID = imported.id
+        saveMenuBarItemsImmediate()
+        showToast("Imported \"\(imported.name)\"")
+    }
+
+    /// Import a menu bar item from a dropped file URL.
+    @MainActor
+    func importMenuBarItem(from url: URL) {
+        guard let imported = try? MenuBarItemFile.read(from: url) else {
+            showToast("Failed to import file")
+            return
+        }
+        menuBarItems.append(imported)
+        selectedMenuBarItemID = imported.id
+        saveMenuBarItemsImmediate()
+        showToast("Imported \"\(imported.name)\"")
+    }
+
+    // MARK: - Import / Export (Manipulators)
 
     /// Export a manipulator by ID using the save panel.
     @MainActor
     func exportManipulator(_ id: UUID) {
         guard let manipulator = manipulators.first(where: { $0.id == id }) else { return }
-        ManipulatorFile.export(manipulator)
+        if ManipulatorFile.export(manipulator) {
+            showToast("Exported \"\(manipulator.name)\"")
+        }
     }
 
     /// Show an open panel and import a manipulator from a file.
@@ -1167,12 +1281,32 @@ final class RemapStore: ObservableObject {
     func importManipulatorFromPanel() {
         guard let imported = ManipulatorFile.importSingle() else { return }
         addImportedManipulator(imported)
+        showToast("Imported \"\(imported.name)\"")
     }
 
     /// Import a manipulator from a dropped file URL.
+    @MainActor
     func importManipulator(from url: URL) {
-        guard let imported = try? ManipulatorFile.read(from: url) else { return }
+        guard let imported = try? ManipulatorFile.read(from: url) else {
+            showToast("Failed to import file")
+            return
+        }
         addImportedManipulator(imported)
+        showToast("Imported \"\(imported.name)\"")
+    }
+
+    // MARK: - Toast
+
+    /// Show a brief success message that auto-dismisses.
+    func showToast(_ message: String) {
+        toastTask?.cancel()
+        toastMessage = message
+        toastTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            if !Task.isCancelled {
+                toastMessage = nil
+            }
+        }
     }
 
     /// Insert an imported (decoded) manipulator into the store, assigning a fresh ID.
@@ -2216,7 +2350,7 @@ extension Manipulator {
             Manipulator(
                 name: "[TEST] Pointing Button Trigger (Right Click)",
                 notes: "Tests: pointing_button as trigger.\nBehavior: Right-clicking shows a notification. Demonstrates intercepting mouse buttons.\nWARNING: Disabled by default — very disruptive.",
-                isEnabled: true,
+                isEnabled: false,
                 trigger: ManipulatorTrigger(
                     steps: [KeyShortcut(key: "right")],
                     keyType: .pointing
@@ -2233,7 +2367,7 @@ extension Manipulator {
             Manipulator(
                 name: "[TEST] Any Key Trigger",
                 notes: "Tests: any key wildcard trigger.\nBehavior: Pressing ANY keyboard key shows a notification. Demonstrates the 'any' trigger type.\nWARNING: Disabled by default — catches EVERY keystroke.",
-                isEnabled: true,
+                isEnabled: false,
                 trigger: ManipulatorTrigger(
                     steps: [],
                     keyType: .any,
@@ -2294,7 +2428,7 @@ extension Manipulator {
             Manipulator(
                 name: "[TEST] Simultaneous Chord Trigger",
                 notes: "Tests: simultaneous (chord) trigger.\nBehavior: Pressing 'j' AND 'k' at the same time types 'chord!'. Pressing them sequentially does nothing.\nTo test: Press j+k together quickly.",
-                isEnabled: true,
+                isEnabled: false,
                 trigger: ManipulatorTrigger(
                     simultaneous: SimultaneousTrigger(
                         keys: [
@@ -2320,7 +2454,7 @@ extension Manipulator {
             Manipulator(
                 name: "[TEST] Simultaneous Chord Strict Order",
                 notes: "Tests: simultaneous_options.key_down_order strict.\nBehavior: Pressing 'u' then 'i' (u first) triggers. 'i' then 'u' (i first) does NOT trigger. Demonstrates strict key-down order.\nTo test: Press u then i together (u first).",
-                isEnabled: true,
+                isEnabled: false,
                 trigger: ManipulatorTrigger(
                     simultaneous: SimultaneousTrigger(
                         keys: [

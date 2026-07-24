@@ -25,8 +25,23 @@ final class StatusBarController: NSObject {
             .store(in: &cancellables)
     }
 
+    func removeAll() {
+        for (_, item) in statusItems {
+            NSStatusBar.system.removeStatusItem(item)
+        }
+        statusItems.removeAll()
+        fallbackID = nil
+    }
+
     func rebuildAll() {
         guard let store else { return }
+
+        // Respect the "Show in Menu Bar" preference
+        if !UserDefaults.standard.bool(forKey: "showInMenuBar") {
+            removeAll()
+            return
+        }
+
         let items = store.menuBarItems.filter { $0.isEnabled }
         let activeIDs = Set(items.map(\.id))
 
@@ -99,7 +114,7 @@ final class StatusBarController: NSObject {
             menu.addItem(.separator())
         }
 
-        // Children
+        // Children — recursively build submenus
         for child in item.children where child.isEnabled {
             if child.isSeparator {
                 menu.addItem(.separator())
@@ -108,12 +123,7 @@ final class StatusBarController: NSObject {
                 if !child.icon.isEmpty { mi.image = NSImage(systemSymbolName: child.icon, accessibilityDescription: child.name) }
                 menu.addItem(mi)
             } else {
-                let sub = NSMenu(title: child.name)
-                for g in child.children where g.isEnabled {
-                    let gi = makeActionItem(title: g.name, id: g.id, useRight: false)
-                    if !g.icon.isEmpty { gi.image = NSImage(systemSymbolName: g.icon, accessibilityDescription: g.name) }
-                    sub.addItem(gi)
-                }
+                let sub = buildSubmenu(for: child)
                 let pi = NSMenuItem(title: child.name, action: nil, keyEquivalent: "")
                 pi.submenu = sub
                 if !child.icon.isEmpty { pi.image = NSImage(systemSymbolName: child.icon, accessibilityDescription: child.name) }
@@ -139,6 +149,27 @@ final class StatusBarController: NSObject {
         let mi = NSMenuItem(title: title, action: action, keyEquivalent: key)
         mi.target = self
         return mi
+    }
+
+    /// Recursively build an NSMenu for a menu bar item that has children.
+    private func buildSubmenu(for item: MenuBarItem) -> NSMenu {
+        let sub = NSMenu(title: item.name)
+        for child in item.children where child.isEnabled {
+            if child.isSeparator {
+                sub.addItem(.separator())
+            } else if child.children.isEmpty {
+                let mi = makeActionItem(title: child.name, id: child.id, useRight: false)
+                if !child.icon.isEmpty { mi.image = NSImage(systemSymbolName: child.icon, accessibilityDescription: child.name) }
+                sub.addItem(mi)
+            } else {
+                let nestedSub = buildSubmenu(for: child)
+                let pi = NSMenuItem(title: child.name, action: nil, keyEquivalent: "")
+                pi.submenu = nestedSub
+                if !child.icon.isEmpty { pi.image = NSImage(systemSymbolName: child.icon, accessibilityDescription: child.name) }
+                sub.addItem(pi)
+            }
+        }
+        return sub
     }
 
     // MARK: - Fallback (empty state)
@@ -217,7 +248,10 @@ private func placeholderMenu() -> NSMenu {
 struct breadboardApp: App {
     @StateObject private var store = RemapStore()
 
-    init() { StatusBarController.shared.install() }
+    init() {
+        UserDefaults.standard.register(defaults: ["showInMenuBar": true])
+        StatusBarController.shared.install()
+    }
 
     var body: some Scene {
         WindowGroup(id: "main") {
