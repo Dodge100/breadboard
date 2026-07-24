@@ -108,89 +108,21 @@ final class RemapStore: ObservableObject {
     /// Internal clipboard storage for Get/Set/Clear Clipboard actions.
     @Published var clipboardText: String = ""
 
-    // MARK: - Widgets
+    // MARK: - Widget Data Sharing
 
-    @Published var widgets: [WidgetItem] = []
-    @Published var selectedWidgetID: UUID?
-
-    var selectedWidget: WidgetItem? {
-        guard let id = selectedWidgetID else { return nil }
-        return widgets.first { $0.id == id }
-    }
-
-    func addWidget(_ widget: WidgetItem? = nil) {
-        let item = widget ?? WidgetItem(name: "New Widget")
-        widgets.append(item)
-        selectedWidgetID = item.id
-        saveConfig()
-    }
-
-    func addWidgetFromTemplate(_ template: WidgetTemplate) {
-        let item = WidgetItem(
-            name: template.name,
-            kind: .template,
-            templateID: template.id,
-            icon: template.icon
-        )
-        widgets.append(item)
-        selectedWidgetID = item.id
-        saveConfig()
-    }
-
-    func duplicateWidget(_ id: UUID) {
-        guard let source = widgets.first(where: { $0.id == id }),
-              let index = widgets.firstIndex(where: { $0.id == id }) else { return }
-        var copy = source
-        copy.id = UUID()
-        copy.name = source.name + " Copy"
-        widgets.insert(copy, at: index + 1)
-        selectedWidgetID = copy.id
-        saveConfig()
-    }
-
-    func deleteWidget(_ id: UUID) {
-        guard let index = widgets.firstIndex(where: { $0.id == id }) else { return }
-        if selectedWidgetID == id {
-            let next = [index + 1, index - 1].first { widgets.indices.contains($0) }
-            selectedWidgetID = next.map { widgets[$0].id }
-        }
-        widgets.remove(at: index)
-        saveConfig()
-    }
-
-    func updateWidget(_ id: UUID, _ transform: (inout WidgetItem) -> Void) {
-        guard let index = widgets.firstIndex(where: { $0.id == id }) else { return }
-        transform(&widgets[index])
-        saveConfig()
-    }
-
-    func updateSelectedWidget(_ transform: (inout WidgetItem) -> Void) {
-        guard let id = selectedWidgetID else { return }
-        updateWidget(id, transform)
-    }
-
-    func toggleWidgetEnabled(_ id: UUID) {
-        updateWidget(id) { $0.isEnabled.toggle() }
-    }
-
-    func moveWidget(from source: IndexSet, to dest: Int) {
-        widgets.move(fromOffsets: source, toOffset: dest)
-        saveConfig()
-    }
-
-    // MARK: - Widget Import/Export
-
-    func importWidgetFromPanel() {
-        guard let imported = WidgetFile.importSingle() else { return }
-        addWidget(imported)
-        showToast("Imported \"\(imported.name)\"")
-    }
-
-    func exportWidget(_ id: UUID) {
-        guard let widget = widgets.first(where: { $0.id == id }) else { return }
-        if WidgetFile.export(widget) {
-            showToast("Exported \"\(widget.name)\"")
-        }
+    /// Push current app state to the WidgetKit extension via shared App Group container.
+    func pushWidgetData() {
+        var data = BreadboardWidgetData()
+        data.manipulatorCount = manipulators.count
+        data.enabledManipulatorCount = manipulators.filter(\.isEnabled).count
+        data.activeProfileName = activeProfile?.name ?? "Default"
+        data.activeProfileIcon = activeProfile?.icon ?? "person"
+        data.remapsActive = remapIsActive
+        data.statusText = remapStatusText
+        data.cpuUsage = 0  // Filled by the extension if available
+        data.memoryUsage = 0
+        data.variables = engine.variables
+        data.save()
     }
 
     // MARK: - Config Profiles
@@ -264,16 +196,13 @@ final class RemapStore: ObservableObject {
         if let profileData = Self.loadProfileData(id: loadedActiveID) {
             self.manipulators = profileData.manipulators
             self.menuBarItems = profileData.menuBarItems
-            self.widgets = profileData.widgets
         } else if daemonMode {
             // Fall back to the legacy config.json
             self.manipulators = Self.loadConfig() ?? []
             self.menuBarItems = []
-            self.widgets = []
         } else {
             self.manipulators = []
             self.menuBarItems = MenuBarItem.defaults()
-            self.widgets = WidgetItem.defaults()
         }
 
         if !daemonMode {
@@ -887,15 +816,12 @@ final class RemapStore: ObservableObject {
         if let loaded = Self.loadProfileData(id: id) {
             manipulators = loaded.manipulators
             menuBarItems = loaded.menuBarItems
-            widgets = loaded.widgets
         } else {
             // Profile file doesn't exist yet
             manipulators = []
             menuBarItems = MenuBarItem.defaults()
-            widgets = WidgetItem.defaults()
         }
         selectedManipulatorID = manipulators.first?.id
-        selectedWidgetID = widgets.first?.id
         mirrorToConfigJSON()
         applyRemaps()
         NotificationCenter.default.post(name: .menuBarItemsDidChange, object: nil)
@@ -965,14 +891,11 @@ final class RemapStore: ObservableObject {
                 if let loaded = Self.loadProfileData(id: first.id) {
                     manipulators = loaded.manipulators
                     menuBarItems = loaded.menuBarItems
-                    widgets = loaded.widgets
                 } else {
                     manipulators = []
                     menuBarItems = MenuBarItem.defaults()
-                    widgets = WidgetItem.defaults()
                 }
                 selectedManipulatorID = manipulators.first?.id
-                selectedWidgetID = widgets.first?.id
                 applyRemaps()
                 NotificationCenter.default.post(name: .menuBarItemsDidChange, object: nil)
             }
@@ -1025,17 +948,11 @@ final class RemapStore: ObservableObject {
         guard let data = try? Data(contentsOf: url) else { return nil }
         // Try new format first (ProfileData)
         if let profileData = try? JSONDecoder().decode(ProfileData.self, from: data) {
-            // Backward-compatible: if widgets is empty, provide defaults
-            if profileData.widgets.isEmpty {
-                var updated = profileData
-                updated.widgets = WidgetItem.defaults()
-                return updated
-            }
             return profileData
         }
         // Fall back to old format [Manipulator]
         if let manipulators = try? JSONDecoder().decode([Manipulator].self, from: data) {
-            return ProfileData(manipulators: manipulators, menuBarItems: MenuBarItem.defaults(), widgets: WidgetItem.defaults())
+            return ProfileData(manipulators: manipulators, menuBarItems: MenuBarItem.defaults())
         }
         return nil
     }
@@ -1046,7 +963,7 @@ final class RemapStore: ObservableObject {
     /// config.json mirror is written lazily — only on profile switch or app launch
     /// — to avoid double-I/O on every change.
     func saveConfig() {
-        let profileData = ProfileData(manipulators: manipulators, menuBarItems: menuBarItems, widgets: widgets)
+        let profileData = ProfileData(manipulators: manipulators, menuBarItems: menuBarItems)
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
         guard let data = try? encoder.encode(profileData) else { return }
@@ -1067,7 +984,7 @@ final class RemapStore: ObservableObject {
 
     private func scheduleSaveConfig() {
         saveConfigTask?.cancel()
-        let profileData = ProfileData(manipulators: manipulators, menuBarItems: menuBarItems, widgets: widgets)
+        let profileData = ProfileData(manipulators: manipulators, menuBarItems: menuBarItems)
         let profileURL = Self.profileConfigURL(for: activeProfileID)
         let appSupportURL = Self.appSupportURL
         let profilesDirectoryURL = Self.profilesDirectoryURL
@@ -1177,7 +1094,6 @@ final class RemapStore: ObservableObject {
                 if let loaded = Self.loadProfileData(id: self.activeProfileID) {
                     self.manipulators = loaded.manipulators
                     self.menuBarItems = loaded.menuBarItems
-                    self.widgets = loaded.widgets
                     self.objectWillChange.send()
                     self.applyRemaps()
                 }
@@ -1332,40 +1248,6 @@ final class RemapStore: ObservableObject {
         stopToKeyCapture()
     }
 
-    // MARK: - Menu Bar Item Import / Export
-
-    /// Export a menu bar item by ID using the save panel.
-    @MainActor
-    func exportMenuBarItem(_ id: UUID) {
-        guard let item = menuBarItems.first(where: { $0.id == id }) else { return }
-        if MenuBarItemFile.export(item) {
-            showToast("Exported \"\(item.name)\"")
-        }
-    }
-
-    /// Show an open panel and import a menu bar item from a file.
-    @MainActor
-    func importMenuBarItemFromPanel() {
-        guard let imported = MenuBarItemFile.importSingle() else { return }
-        menuBarItems.append(imported)
-        selectedMenuBarItemID = imported.id
-        saveMenuBarItemsImmediate()
-        showToast("Imported \"\(imported.name)\"")
-    }
-
-    /// Import a menu bar item from a dropped file URL.
-    @MainActor
-    func importMenuBarItem(from url: URL) {
-        guard let imported = try? MenuBarItemFile.read(from: url) else {
-            showToast("Failed to import file")
-            return
-        }
-        menuBarItems.append(imported)
-        selectedMenuBarItemID = imported.id
-        saveMenuBarItemsImmediate()
-        showToast("Imported \"\(imported.name)\"")
-    }
-
     // MARK: - Import / Export (Manipulators)
 
     /// Export a manipulator by ID using the save panel.
@@ -1393,6 +1275,37 @@ final class RemapStore: ObservableObject {
             return
         }
         addImportedManipulator(imported)
+        showToast("Imported \"\(imported.name)\"")
+    }
+
+    // MARK: - Import / Export (Menu Bar Items)
+
+    @MainActor
+    func exportMenuBarItem(_ id: UUID) {
+        guard let item = menuBarItems.first(where: { $0.id == id }) else { return }
+        if MenuBarItemFile.export(item) {
+            showToast("Exported \"\(item.name)\"")
+        }
+    }
+
+    @MainActor
+    func importMenuBarItemFromPanel() {
+        guard let imported = MenuBarItemFile.importSingle() else { return }
+        menuBarItems.append(imported)
+        selectedMenuBarItemID = imported.id
+        saveMenuBarItemsImmediate()
+        showToast("Imported \"\(imported.name)\"")
+    }
+
+    @MainActor
+    func importMenuBarItem(from url: URL) {
+        guard let imported = try? MenuBarItemFile.read(from: url) else {
+            showToast("Failed to import file")
+            return
+        }
+        menuBarItems.append(imported)
+        selectedMenuBarItemID = imported.id
+        saveMenuBarItemsImmediate()
         showToast("Imported \"\(imported.name)\"")
     }
 

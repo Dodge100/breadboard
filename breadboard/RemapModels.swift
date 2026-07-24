@@ -188,13 +188,11 @@ struct ProfilesManifest: Codable {
 struct ProfileData: Codable {
     var manipulators: [Manipulator]
     var menuBarItems: [MenuBarItem]
-    var widgets: [WidgetItem]
 
     static func `default`() -> ProfileData {
         ProfileData(
             manipulators: [],
-            menuBarItems: MenuBarItem.defaults(),
-            widgets: WidgetItem.defaults()
+            menuBarItems: MenuBarItem.defaults()
         )
     }
 }

@@ -42,7 +42,6 @@ struct ConfigProfileManagerView: View {
                         store.activeProfileID = profile.id
                         store.manipulators = []
                         store.menuBarItems = MenuBarItem.defaults()
-                        store.widgets = WidgetItem.defaults()
                         store.saveProfilesManifest()
                         store.saveConfig()
                         store.applyRemaps()

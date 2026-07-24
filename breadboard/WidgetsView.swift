@@ -1,936 +1,555 @@
 import SwiftUI
-import WebKit
+import WidgetKit
 
-// MARK: - Main Widgets View
+// MARK: - Widgets Dashboard
 
 struct WidgetsView: View {
     @ObservedObject var store: RemapStore
+    @StateObject private var widgetManager = WidgetManager.shared
+    @State private var selectedWidget: AppWidgetKind? = .activeRemaps
 
     var body: some View {
         NavigationSplitView {
-            WidgetsSidebar(store: store)
+            WidgetsSidebar(selectedWidget: $selectedWidget)
                 .navigationTitle("Widgets")
         } detail: {
-            WidgetEditorPane(store: store)
-                .frame(minWidth: 520)
+            if let kind = selectedWidget {
+                WidgetDetailView(kind: kind, store: store, widgetManager: widgetManager)
+                    .frame(minWidth: 480)
+            }
         }
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Menu {
-                    Section("Pre-built Templates") {
-                        ForEach(WidgetTemplate.available) { template in
-                            Button {
-                                store.addWidgetFromTemplate(template)
-                            } label: {
-                                Label(template.name, systemImage: template.icon)
-                            }
-                        }
-                    }
-                    Divider()
-                    Button {
-                        store.addWidget()
-                    } label: {
-                        Label("Blank HTML Widget", systemImage: "chevron.left.forwardslash.chevron.right")
-                    }
-                    Button {
-                        var widget = WidgetItem(name: "Web Page", kind: .url)
-                        widget.urlString = "https://"
-                        store.addWidget(widget)
-                    } label: {
-                        Label("URL Widget", systemImage: "link")
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .help("Add a new widget")
-            }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
-                    store.importWidgetFromPanel()
+                    widgetManager.reloadAllWidgets()
                 } label: {
-                    Image(systemName: "tray.and.arrow.down")
+                    Image(systemName: "arrow.clockwise")
                 }
-                .help("Import a widget file (⌘⌥I)")
-
-                Button {
-                    if let id = store.selectedWidgetID {
-                        store.exportWidget(id)
-                    }
-                } label: {
-                    Image(systemName: "tray.and.arrow.up")
-                }
-                .disabled(store.selectedWidgetID == nil)
-                .help("Export the selected widget (⌘⌥E)")
+                .help("Reload all widget timelines")
 
                 ProfileSwitcherButton(store: store)
             }
         }
+        .onAppear {
+            pushWidgetData(store: store)
+        }
+        .onChange(of: store.manipulators.count) { _ in pushWidgetData(store: store) }
+        .onChange(of: store.activeProfileID) { _ in pushWidgetData(store: store) }
+        .onChange(of: store.remapIsActive) { _ in pushWidgetData(store: store) }
+    }
+
+    /// Push current app state to the shared App Group container for widgets.
+    private func pushWidgetData(store: RemapStore) {
+        var data = BreadboardWidgetData()
+        data.manipulatorCount = store.manipulators.count
+        data.enabledManipulatorCount = store.manipulators.filter(\.isEnabled).count
+        data.activeProfileName = store.activeProfile?.name ?? "Default"
+        data.activeProfileIcon = store.activeProfile?.icon ?? "person"
+        data.remapsActive = store.remapIsActive
+        data.statusText = store.remapStatusText
+        data.variables = store.engine.variables
+        data.save()
+        widgetManager.reloadAllWidgets()
     }
 }
 
 // MARK: - Sidebar
 
 private struct WidgetsSidebar: View {
-    @ObservedObject var store: RemapStore
-    @State private var itemToDelete: WidgetItem?
+    @Binding var selectedWidget: AppWidgetKind?
 
     var body: some View {
-        VStack(spacing: 0) {
-            searchField
-            itemList
-        }
-        .frame(minWidth: 260, maxWidth: 360)
-        .alert(
-            "Delete \"\(itemToDelete?.name ?? "")\"?",
-            isPresented: Binding(
-                get: { itemToDelete != nil },
-                set: { if !$0 { itemToDelete = nil } }
-            )
-        ) {
-            Button("Cancel", role: .cancel) { itemToDelete = nil }
-            Button("Delete", role: .destructive) {
-                if let id = itemToDelete?.id {
-                    store.deleteWidget(id)
+        List(selection: $selectedWidget) {
+            Section("Available Widgets") {
+                ForEach(AppWidgetKind.allCases) { kind in
+                    WidgetSidebarRow(kind: kind)
+                        .tag(kind)
                 }
-                itemToDelete = nil
-            }
-        } message: {
-            Text("This action cannot be undone.")
-        }
-    }
-
-    private var searchField: some View {
-        HStack {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.tertiary)
-            TextField("Search widgets…", text: $store.searchText)
-                .textFieldStyle(.plain)
-                .font(.subheadline)
-            if !store.searchText.isEmpty {
-                Button {
-                    store.searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
             }
         }
-        .padding(8)
-        .background(Color(nsColor: .controlBackgroundColor))
-    }
-
-    private var itemList: some View {
-        let filteredItems: [WidgetItem] = {
-            let query = store.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard !query.isEmpty else { return store.widgets }
-            return store.widgets.filter {
-                $0.name.lowercased().contains(query) || $0.summary.lowercased().contains(query)
-            }
-        }()
-
-        return Group {
-            if store.widgets.isEmpty {
-                ContentUnavailableView {
-                    Label("No Widgets", systemImage: "sparkles")
-                } description: {
-                    Text("Add a widget from a template or create a custom HTML widget.")
-                } actions: {
-                    Button("Add Widget") {
-                        store.addWidget()
-                    }
-                }
-            } else if filteredItems.isEmpty {
-                ContentUnavailableView {
-                    Label("No Results", systemImage: "magnifyingglass")
-                } description: {
-                    Text("Try a different search query.")
-                }
-            } else {
-                List(selection: $store.selectedWidgetID) {
-                    ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
-                        WidgetItemRow(store: store, item: item, index: index)
-                            .tag(item.id)
-                            .contextMenu {
-                                contextMenuItems(for: item)
-                            }
-                    }
-                    .onMove { source, dest in
-                        store.moveWidget(from: source, to: dest)
-                    }
-                    .onDelete { indexSet in
-                        if let i = indexSet.first, filteredItems.indices.contains(i) {
-                            itemToDelete = filteredItems[i]
-                        }
-                    }
-                }
-                .listStyle(.inset(alternatesRowBackgrounds: true))
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func contextMenuItems(for item: WidgetItem) -> some View {
-        Button {
-            store.toggleWidgetEnabled(item.id)
-        } label: {
-            Text(item.isEnabled ? "Disable" : "Enable")
-            Image(systemName: item.isEnabled ? "pause" : "play")
-        }
-
-        Button {
-            store.duplicateWidget(item.id)
-        } label: {
-            Text("Duplicate")
-            Image(systemName: "plus.square.on.square")
-        }
-
-        Divider()
-
-        Button(role: .destructive) {
-            itemToDelete = item
-        } label: {
-            Text("Delete")
-            Image(systemName: "trash")
-        }
+        .listStyle(.sidebar)
+        .frame(minWidth: 240)
     }
 }
 
-// MARK: - Widget Item Row
+// MARK: - Sidebar Row
 
-private struct WidgetItemRow: View {
-    @ObservedObject var store: RemapStore
-    let item: WidgetItem
-    var index: Int = 0
+private struct WidgetSidebarRow: View {
+    let kind: AppWidgetKind
 
     var body: some View {
         HStack(spacing: 10) {
-            // Kind icon
-            Image(systemName: kindIcon)
-                .font(.system(size: 13))
-                .foregroundStyle(item.isEnabled ? .primary : .tertiary)
-                .frame(width: 22)
+            Image(systemName: kind.systemImage)
+                .font(.title3)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(item.name)
-                        .font(.body)
-                        .lineLimit(1)
-                    if !item.isEnabled {
-                        Text("Disabled")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(.quaternary.opacity(0.3), in: Capsule())
-                    }
-                }
-                Text(item.kind.description)
+                Text(kind.rawValue)
+                    .font(.body)
+                Text(kind.description)
                     .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Widget Detail View
+
+private struct WidgetDetailView: View {
+    let kind: AppWidgetKind
+    @ObservedObject var store: RemapStore
+    @ObservedObject var widgetManager: WidgetManager
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // Header
+                headerSection
+
+                Divider()
+
+                // Live preview card
+                previewSection
+
+                Divider()
+
+                // Sizes
+                sizesSection
+
+                Divider()
+
+                // Info
+                infoSection
+            }
+            .padding(24)
+        }
+    }
+
+    // MARK: - Header
+
+    private var headerSection: some View {
+        HStack(spacing: 16) {
+            Image(systemName: kind.systemImage)
+                .font(.system(size: 36))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 48)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(kind.rawValue)
+                    .font(.largeTitle.weight(.bold))
+
+                Text(kind.description)
+                    .font(.body)
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            // Size indicator
-            Text("\(Int(item.width))×\(Int(item.height))")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .monospacedDigit()
-        }
-        .padding(.vertical, 4)
-        .opacity(item.isEnabled ? 1 : 0.6)
-    }
+            VStack(alignment: .trailing, spacing: 4) {
+                Button("Add to Notification Center") {
+                    // Guide the user to add the widget
+                    let alert = NSAlert()
+                    alert.messageText = "Add Widget to Notification Center"
+                    alert.informativeText = """
+                    1. Open Notification Center (click the date in the menu bar).
+                    2. Scroll to the bottom and click "Edit Widgets".
+                    3. Find "Breadboard" in the widget list.
+                    4. Click the "\(kind.rawValue)" widget to add it.
+                    """
+                    alert.alertStyle = .informational
+                    alert.addButton(withTitle: "Open Notification Center")
+                    alert.addButton(withTitle: "OK")
 
-    private var kindIcon: String {
-        switch item.kind {
-        case .html: return "chevron.left.forwardslash.chevron.right"
-        case .url: return "link"
-        case .template: return "square.on.square"
-        }
-    }
-}
-
-// MARK: - Editor Pane
-
-private struct WidgetEditorPane: View {
-    @ObservedObject var store: RemapStore
-    @State private var showDeleteConfirmation = false
-    @State private var showTemplatePicker = false
-    @State private var previewUpdateID = UUID()
-
-    var body: some View {
-        Group {
-            if let item = store.selectedWidget {
-                editorContent(item: item)
-            } else {
-                ContentUnavailableView {
-                    Label("Select a Widget", systemImage: "sparkles")
-                } description: {
-                    Text("Choose a widget from the sidebar or add a new one.")
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .alert(
-            "Delete \"\(store.selectedWidget?.name ?? "")\"?",
-            isPresented: $showDeleteConfirmation
-        ) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
-                if let id = store.selectedWidgetID {
-                    store.deleteWidget(id)
-                }
-            }
-        } message: {
-            Text("This action cannot be undone.")
-        }
-        .sheet(isPresented: $showTemplatePicker) {
-            TemplatePickerSheet(store: store)
-        }
-        .id(previewUpdateID)
-    }
-
-    private func editorContent(item: WidgetItem) -> some View {
-        let binding = Binding(
-            get: { item },
-            set: { newItem in
-                if let idx = store.widgets.firstIndex(where: { $0.id == newItem.id }) {
-                    store.widgets[idx] = newItem
-                    store.saveConfig()
-                }
-            }
-        )
-
-        return HSplitView {
-            // Left: Properties editor
-            propertiesEditor(item: binding.wrappedValue, binding: binding)
-                .frame(minWidth: 320, idealWidth: 400)
-
-            // Right: Live preview
-            previewPanel(item: binding.wrappedValue)
-                .frame(minWidth: 280, idealWidth: 360)
-        }
-    }
-
-    // MARK: - Properties Editor
-
-    private func propertiesEditor(item: WidgetItem, binding: Binding<WidgetItem>) -> some View {
-        Form {
-            // ── Basic Settings ──
-            Section {
-                HStack {
-                    Text("Name")
-                    Spacer()
-                    TextField("Widget Name", text: binding.name)
-                        .frame(width: 200)
-                        .textFieldStyle(.roundedBorder)
-                        .multilineTextAlignment(.trailing)
-                }
-
-                HStack {
-                    Text("Type")
-                    Spacer()
-                    Text(item.kind.rawValue)
-                        .foregroundStyle(.secondary)
-                }
-
-                Toggle("Enabled", isOn: binding.isEnabled)
-            } header: {
-                Label("Basic", systemImage: "gearshape")
-            }
-
-            // ── Appearance ──
-            Section {
-                HStack {
-                    Text("Width")
-                    Spacer()
-                    TextField("Width", value: binding.width, format: .number)
-                        .frame(width: 80)
-                        .textFieldStyle(.roundedBorder)
-                        .multilineTextAlignment(.trailing)
-                    Text("px")
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Text("Height")
-                    Spacer()
-                    TextField("Height", value: binding.height, format: .number)
-                        .frame(width: 80)
-                        .textFieldStyle(.roundedBorder)
-                        .multilineTextAlignment(.trailing)
-                    Text("px")
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Text("Corner Radius")
-                    Spacer()
-                    Slider(value: binding.cornerRadius, in: 0...24, step: 1)
-                        .frame(width: 120)
-                    Text("\(Int(item.cornerRadius))px")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32)
-                }
-
-                HStack {
-                    Text("Background")
-                    Spacer()
-                    ColorPicker("", selection: Binding(
-                        get: { Color(hex: item.backgroundColor) ?? Color(nsColor: .windowBackgroundColor) },
-                        set: { newColor in
-                            binding.backgroundColor.wrappedValue = newColor.toHex() ?? "#1a1a2e"
-                        }
-                    ))
-                    .labelsHidden()
-                }
-
-                HStack {
-                    Text("Text Color")
-                    Spacer()
-                    ColorPicker("", selection: Binding(
-                        get: { Color(hex: item.textColor) ?? .white },
-                        set: { newColor in
-                            binding.textColor.wrappedValue = newColor.toHex() ?? "#ffffff"
-                        }
-                    ))
-                    .labelsHidden()
-                }
-
-                if item.kind != .url {
-                    HStack {
-                        Text("Refresh Interval")
-                        Spacer()
-                        Picker("", selection: binding.refreshInterval) {
-                            Text("None").tag(0.0)
-                            Text("1 sec").tag(1.0)
-                            Text("5 sec").tag(5.0)
-                            Text("10 sec").tag(10.0)
-                            Text("30 sec").tag(30.0)
-                            Text("1 min").tag(60.0)
-                            Text("5 min").tag(300.0)
-                        }
-                        .labelsHidden()
-                        .frame(width: 120)
-                    }
-                }
-            } header: {
-                Label("Appearance", systemImage: "paintpalette")
-            }
-
-            // ── Content ──
-            Section {
-                switch item.kind {
-                case .html:
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("HTML Content")
-                            Spacer()
-                            Button("Use Template…") {
-                                showTemplatePicker = true
-                            }
-                            .controlSize(.small)
-                            .buttonStyle(.bordered)
-                        }
-                        HTMLTextEditor(text: binding.htmlContent)
-                            .frame(minHeight: 300)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color(nsColor: .separatorColor).opacity(0.3), lineWidth: 1)
-                            )
-                    }
-
-                case .url:
-                    HStack {
-                        Text("URL")
-                        Spacer()
-                        TextField("https://example.com", text: binding.urlString)
-                            .frame(width: 260)
-                            .textFieldStyle(.roundedBorder)
-                            .multilineTextAlignment(.trailing)
-                            .font(.body.monospaced())
-                    }
-
-                case .template:
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Template")
-                            Spacer()
-                            if let tid = item.templateID,
-                               let template = WidgetTemplate.available.first(where: { $0.id == tid }) {
-                                Label(template.name, systemImage: template.icon)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Button("Change Template…") {
-                                showTemplatePicker = true
-                            }
-                            .controlSize(.small)
-                            .buttonStyle(.bordered)
-                        }
-
-                        if let tid = item.templateID,
-                           let template = WidgetTemplate.available.first(where: { $0.id == tid }) {
-                            Text(template.description)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    let response = alert.runModal()
+                    if response == .alertFirstButtonReturn {
+                        // macOS doesn't have a public API for this,
+                        // but we can try to open the widget gallery URL
+                        if let url = URL(string: "breadboard://widget-gallery") {
+                            NSWorkspace.shared.open(url)
                         }
                     }
                 }
-            } header: {
-                Label("Content", systemImage: "doc.text")
-            }
+                .controlSize(.large)
 
-            // ── Preview Controls ──
-            Section {
-                HStack {
-                    Button("Refresh Preview") {
-                        previewUpdateID = UUID()
-                    }
-                    .controlSize(.small)
-
-                    Button("Open in Window…") {
-                        openInWindow(item: item)
-                    }
-                    .controlSize(.small)
-                }
-            } header: {
-                Label("Preview", systemImage: "eye")
-            }
-        }
-        .formStyle(.grouped)
-        .scrollIndicators(.visible)
-    }
-
-    // MARK: - Preview Panel
-
-    private func previewPanel(item: WidgetItem) -> some View {
-        VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "eye")
-                    .foregroundStyle(.secondary)
-                Text("Live Preview")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(Int(item.width))×\(Int(item.height))")
-                    .font(.caption2)
+                Text("Or right-click on the desktop and select \"Edit Widgets\".")
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
-                    .monospacedDigit()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(.quaternary.opacity(0.3))
-
-            WebView(
-                html: item.kind == .url ? nil : item.resolvedHTML(with: store.engine.variables),
-                url: item.kind == .url ? URL(string: item.urlString) : nil,
-                backgroundColor: item.backgroundColor,
-                refreshInterval: item.refreshInterval > 0 ? item.refreshInterval : nil
-            )
-            .frame(width: min(item.width, 500), height: min(item.height, 400))
-            .clipShape(RoundedRectangle(cornerRadius: item.cornerRadius))
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .windowBackgroundColor))
         }
     }
 
-    // MARK: - Open in Window
+    // MARK: - Preview
 
-    private func openInWindow(item: WidgetItem) {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: item.width, height: item.height),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = item.name
-        window.isReleasedWhenClosed = false
-        let hostingVC = NSHostingController(
-            rootView: WebView(
-                html: item.kind == .url ? nil : item.resolvedHTML(with: store.engine.variables),
-                url: item.kind == .url ? URL(string: item.urlString) : nil,
-                backgroundColor: item.backgroundColor,
-                refreshInterval: item.refreshInterval > 0 ? item.refreshInterval : nil
-            )
-            .frame(width: item.width, height: item.height)
-            .clipShape(RoundedRectangle(cornerRadius: item.cornerRadius))
-        )
-        window.contentViewController = hostingVC
-        window.makeKeyAndOrderFront(nil)
-    }
-}
+    private var previewSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Preview", systemImage: "eye")
+                .font(.title3.weight(.semibold))
 
-// MARK: - HTML Text Editor (Simplified Code Editor)
-
-private struct HTMLTextEditor: NSViewRepresentable {
-    @Binding var text: String
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.borderType = .noBorder
-
-        let textView = NSTextView()
-        textView.isEditable = true
-        textView.isSelectable = true
-        textView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        textView.textColor = NSColor.textColor
-        textView.backgroundColor = NSColor.textBackgroundColor
-        textView.string = text
-        textView.delegate = context.coordinator
-        textView.autoresizingMask = [.width]
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.lineBreakMode = .byWordWrapping
-
-        scrollView.documentView = textView
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
-        if textView.string != text {
-            textView.string = text
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
-    }
-
-    class Coordinator: NSObject, NSTextViewDelegate {
-        var text: Binding<String>
-
-        init(text: Binding<String>) {
-            self.text = text
-        }
-
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            text.wrappedValue = textView.string
-        }
-    }
-}
-
-// MARK: - WebView (WKWebView Wrapper)
-
-private struct WebView: NSViewRepresentable {
-    let html: String?
-    let url: URL?
-    let backgroundColor: String
-    var refreshInterval: TimeInterval? = nil
-
-    init(html: String? = nil, url: URL? = nil, backgroundColor: String = "#1a1a2e", refreshInterval: TimeInterval? = nil) {
-        self.html = html
-        self.url = url
-        self.backgroundColor = backgroundColor
-        self.refreshInterval = refreshInterval
-    }
-
-    func makeNSView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        config.mediaTypesRequiringUserActionForPlayback = .all
-
-        let webView = WKWebView(frame: .zero, configuration: config)
-        webView.setValue(false, forKey: "drawsBackground")
-        webView.navigationDelegate = context.coordinator
-
-        if let refreshInterval {
-            let timer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { _ in
-                context.coordinator.refresh(webView)
-            }
-            context.coordinator.timer = timer
-        }
-
-        loadContent(webView: webView)
-        return webView
-    }
-
-    func updateNSView(_ webView: WKWebView, context: Context) {
-        loadContent(webView: webView)
-
-        // Update refresh interval
-        context.coordinator.timer?.invalidate()
-        if let refreshInterval {
-            let timer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { _ in
-                context.coordinator.refresh(webView)
-            }
-            context.coordinator.timer = timer
-        }
-    }
-
-    private func loadContent(webView: WKWebView) {
-        if let html {
-            webView.loadHTMLString(html, baseURL: nil)
-        } else if let url {
-            webView.load(URLRequest(url: url))
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(backgroundColor: backgroundColor)
-    }
-
-    class Coordinator: NSObject, WKNavigationDelegate {
-        let backgroundColor: String
-        var timer: Timer?
-
-        init(backgroundColor: String) {
-            self.backgroundColor = backgroundColor
-        }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // Inject background color into the page
-            let js = """
-            document.body.style.backgroundColor = '\(backgroundColor)';
-            """
-            webView.evaluateJavaScript(js, completionHandler: nil)
-        }
-
-        func refresh(_ webView: WKWebView) {
-            webView.reload()
-        }
-
-        deinit {
-            timer?.invalidate()
-        }
-    }
-}
-
-// MARK: - Template Picker Sheet
-
-private struct TemplatePickerSheet: View {
-    @ObservedObject var store: RemapStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var selectedTemplate: WidgetTemplate?
-    @State private var searchText = ""
-
-    private let categories = ["All", "Utilities", "Productivity", "System", "Developer"]
-
-    @State private var selectedCategory = "All"
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Choose a Template")
-                    .font(.title3.weight(.semibold))
-                Spacer()
-                Button("Cancel") {
-                    dismiss()
+            HStack(spacing: 24) {
+                WidgetPreviewCard(kind: kind, size: .small)
+                WidgetPreviewCard(kind: kind, size: .medium)
+                if kind == .variableMonitor {
+                    WidgetPreviewCard(kind: kind, size: .extraLarge)
                 }
             }
-            .padding()
-            .background(.quaternary.opacity(0.2))
-
-            // Category filter
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(categories, id: \.self) { category in
-                        Button {
-                            selectedCategory = category
-                        } label: {
-                            Text(category)
-                                .font(.subheadline)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 5)
-                                .background(
-                                    selectedCategory == category
-                                        ? Color.accentColor
-                                        : Color(nsColor: .controlBackgroundColor),
-                                    in: Capsule()
-                                )
-                                .foregroundStyle(selectedCategory == category ? .white : .primary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-            }
-            .background(.quaternary.opacity(0.1))
-
-            // Search
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.tertiary)
-                TextField("Search templates…", text: $searchText)
-                    .textFieldStyle(.plain)
-                if !searchText.isEmpty {
-                    Button { searchText = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.tertiary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(8)
-            .background(Color(nsColor: .controlBackgroundColor))
-
-            // Template grid
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 12) {
-                    ForEach(filteredTemplates) { template in
-                        TemplateCard(
-                            template: template,
-                            isSelected: selectedTemplate?.id == template.id,
-                            onSelect: { selectedTemplate = template },
-                            onDoubleClick: {
-                                applyTemplate(template)
-                            }
-                        )
-                    }
-                }
-                .padding()
-            }
-
-            // Footer
-            HStack {
-                Spacer()
-                Button("Cancel") {
-                    dismiss()
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Button("Use Template") {
-                    if let template = selectedTemplate {
-                        applyTemplate(template)
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(selectedTemplate == nil)
-            }
-            .padding()
-            .background(.quaternary.opacity(0.2))
-        }
-        .frame(width: 560, height: 480)
-    }
-
-    private var filteredTemplates: [WidgetTemplate] {
-        let templates = WidgetTemplate.available
-        let categoryFiltered: [WidgetTemplate]
-        if selectedCategory == "All" {
-            categoryFiltered = templates
-        } else {
-            categoryFiltered = templates.filter { $0.category == selectedCategory }
-        }
-        guard !searchText.isEmpty else { return categoryFiltered }
-        let query = searchText.lowercased()
-        return categoryFiltered.filter {
-            $0.name.lowercased().contains(query) ||
-            $0.description.lowercased().contains(query) ||
-            $0.category.lowercased().contains(query)
         }
     }
 
-    private func applyTemplate(_ template: WidgetTemplate) {
-        if let id = store.selectedWidgetID {
-            store.updateWidget(id) { item in
-                item.kind = .template
-                item.templateID = template.id
-                item.htmlContent = template.htmlContent
-                item.name = template.name
-                item.icon = template.icon
-            }
-        } else {
-            store.addWidgetFromTemplate(template)
-        }
-        dismiss()
-    }
-}
+    // MARK: - Sizes
 
-// MARK: - Template Card
+    private var sizesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Available Sizes", systemImage: "rectangle.split.triangles")
+                .font(.title3.weight(.semibold))
 
-private struct TemplateCard: View {
-    let template: WidgetTemplate
-    let isSelected: Bool
-    let onSelect: () -> Void
-    let onDoubleClick: () -> Void
-
-    var body: some View {
-        Button {
-            onSelect()
-        } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: template.icon)
-                        .font(.title3)
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 24)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(template.name)
-                            .font(.body.weight(.medium))
-                            .lineLimit(1)
-                        Text(template.category)
-                            .font(.caption2)
+            HStack(spacing: 16) {
+                ForEach(kind.families, id: \.self) { size in
+                    HStack(spacing: 6) {
+                        Image(systemName: sizeIcon(for: size))
                             .foregroundStyle(.secondary)
+                        Text(size)
+                            .font(.subheadline)
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
                 }
+            }
+        }
+    }
 
-                Text(template.description)
+    private func sizeIcon(for size: String) -> String {
+        switch size {
+        case "Small": return "rectangle"
+        case "Medium": return "rectangle.split.2x1"
+        case "Extra Large": return "rectangle.split.3x1"
+        default: return "rectangle"
+        }
+    }
+
+    // MARK: - Info
+
+    private var infoSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Widget Data", systemImage: "info.circle")
+                .font(.title3.weight(.semibold))
+
+            VStack(spacing: 6) {
+                DataRow(label: "Widget Kind ID", value: kind.widgetKind)
+                DataRow(label: "Last Data Update", value: widgetManager.lastDataUpdate.formatted(date: .abbreviated, time: .standard))
+                DataRow(label: "Remaps Active", value: store.remapIsActive ? "Yes" : "No")
+                DataRow(label: "Active Profile", value: store.activeProfile?.name ?? "None")
+                DataRow(label: "Total Remaps", value: "\(store.manipulators.count)")
+                DataRow(label: "Enabled Remaps", value: "\(store.manipulators.filter(\.isEnabled).count)")
+                DataRow(label: "Variables Tracked", value: "\(store.engine.variables.count)")
+            }
+            .padding()
+            .background(.quaternary.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
+
+            HStack {
+                Button("Reload Widget Now") {
+                    widgetManager.reloadWidget(kind: kind)
+                }
+                .controlSize(.small)
+
+                Button("Reload All Widgets") {
+                    widgetManager.reloadAllWidgets()
+                }
+                .controlSize(.small)
+            }
+        }
+    }
+}
+
+// MARK: - Data Row
+
+private struct DataRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.primary)
+        }
+    }
+}
+
+// MARK: - Widget Preview Card
+
+private struct WidgetPreviewCard: View {
+    let kind: AppWidgetKind
+    let size: WidgetPreviewSize
+
+    enum WidgetPreviewSize: String, CaseIterable {
+        case small = "Small"
+        case medium = "Medium"
+        case extraLarge = "Extra Large"
+
+        var widgetFamily: WidgetFamily {
+            switch self {
+            case .small: return .systemSmall
+            case .medium: return .systemMedium
+            case .extraLarge: return .systemExtraLarge
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text(size.rawValue)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+
+            previewContent
+                .frame(width: previewWidth, height: previewHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(.widgetBackground)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(.quaternary.opacity(0.3), lineWidth: 1)
+                )
+        }
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        switch kind {
+        case .activeRemaps:
+            ActiveRemapsPreview(size: size)
+        case .quickActions:
+            QuickActionsPreview(size: size)
+        case .systemMonitor:
+            SystemMonitorPreview(size: size)
+        case .variableMonitor:
+            VariableMonitorPreview(size: size)
+        }
+    }
+
+    private var previewWidth: CGFloat {
+        switch size {
+        case .small: return 158
+        case .medium: return 340
+        case .extraLarge: return 340
+        }
+    }
+
+    private var previewHeight: CGFloat {
+        switch size {
+        case .small: return 158
+        case .medium: return 158
+        case .extraLarge: return 340
+        }
+    }
+}
+
+// MARK: - Widget Previews
+
+private struct ActiveRemapsPreview: View {
+    let size: WidgetPreviewCard.WidgetPreviewSize
+
+    var body: some View {
+        switch size {
+        case .small:
+            VStack(spacing: 8) {
+                ZStack {
+                    Circle()
+                        .fill(.tertiary.opacity(0.2))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "keyboard")
+                        .font(.title2)
+                        .foregroundStyle(.green)
+                }
+                Text("8")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                Text("Active")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(isSelected ? Color.accentColor.opacity(0.08) : Color(nsColor: .controlBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(
-                        isSelected ? Color.accentColor : Color(nsColor: .separatorColor).opacity(0.3),
-                        lineWidth: isSelected ? 2 : 1
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .onTapGesture(count: 2) {
-            onDoubleClick()
+        default:
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Remaps", systemImage: "keyboard")
+                        .font(.headline)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text("8")
+                            .font(.system(size: 36, weight: .bold, design: .rounded))
+                            .foregroundStyle(.green)
+                        Text("/ 12")
+                            .font(.body)
+                            .foregroundStyle(.tertiary)
+                    }
+                    HStack(spacing: 4) {
+                        Circle().fill(Color.green).frame(width: 6, height: 6)
+                        Text("Active").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 8) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "gamecontroller").font(.caption)
+                        Text("Gaming").font(.caption.weight(.medium))
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.tertiary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+
+                    Text("8 remaps active")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, 16)
         }
     }
 }
 
-// MARK: - Color Hex Extension
+private struct QuickActionsPreview: View {
+    let size: WidgetPreviewCard.WidgetPreviewSize
 
-private extension Color {
-    init?(hex: String) {
-        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        var int: UInt64 = 0
-        Scanner(string: hex).scanHexInt64(&int)
-        let a, r, g, b: UInt64
-        switch hex.count {
-        case 6:
-            (a, r, g, b) = (255, (int >> 16) & 0xFF, (int >> 8) & 0xFF, int & 0xFF)
-        case 8:
-            (a, r, g, b) = ((int >> 24) & 0xFF, (int >> 16) & 0xFF, (int >> 8) & 0xFF, int & 0xFF)
-        default:
-            return nil
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Quick Actions", systemImage: "bolt.fill")
+                .font(.headline)
+
+            HStack(spacing: 12) {
+                actionTile(icon: "pause.circle.fill", color: .orange, label: "Pause")
+                actionTile(icon: "keyboard", color: .accentColor, label: "Open App")
+                actionTile(icon: "gamecontroller", color: .secondary, label: "Gaming")
+            }
         }
-        self.init(
-            .sRGB,
-            red: Double(r) / 255,
-            green: Double(g) / 255,
-            blue: Double(b) / 255,
-            opacity: Double(a) / 255
-        )
+        .padding(.horizontal, 16)
     }
 
-    func toHex() -> String? {
-        let color = NSColor(self).usingColorSpace(.sRGB)
-        guard let color else { return nil }
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        color.getRed(&r, green: &g, blue: &b, alpha: &a)
-        return String(format: "#%02X%02X%02X", Int(r * 255), Int(g * 255), Int(b * 255))
+    private func actionTile(icon: String, color: Color, label: String) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(color)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.primary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(10)
+        .background(.tertiary.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
     }
+}
+
+private struct SystemMonitorPreview: View {
+    let size: WidgetPreviewCard.WidgetPreviewSize
+
+    var body: some View {
+        switch size {
+        case .small:
+            VStack(spacing: 10) {
+                Gauge(value: 0.45) {
+                    Label("CPU", systemImage: "cpu").font(.caption2)
+                }
+                .gaugeStyle(.accessoryCircularCapacity)
+                .tint(.orange)
+                .scaleEffect(0.85)
+
+                VStack(spacing: 2) {
+                    HStack {
+                        Text("RAM").font(.caption2).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("62%").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    ProgressView(value: 0.62).tint(.orange)
+                }
+            }
+            .padding(.horizontal, 16)
+        default:
+            HStack(spacing: 16) {
+                VStack(spacing: 4) {
+                    Gauge(value: 0.45) {
+                        Label("CPU", systemImage: "cpu")
+                    }
+                    .gaugeStyle(.accessoryCircularCapacity)
+                    .tint(.orange)
+                    Text("45%").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                }
+
+                Divider().frame(height: 80)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Memory", systemImage: "memorychip").font(.subheadline).foregroundStyle(.secondary)
+                    ProgressView(value: 0.62).tint(.orange)
+                    Text("62% used").font(.caption).foregroundStyle(.tertiary)
+                    Spacer()
+                    HStack {
+                        Label("187", systemImage: "terminal").font(.caption2).foregroundStyle(.tertiary)
+                        Spacer()
+                        Text("3d 5h").font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+}
+
+private struct VariableMonitorPreview: View {
+    let size: WidgetPreviewCard.WidgetPreviewSize
+
+    private var sampleVars: [(String, String)] {
+        [("counter", "42"), ("lastApp", "Safari"), ("batteryLevel", "85%"), ("ipAddress", "192.168.1.5")]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Variables", systemImage: "variable")
+                .font(.headline)
+
+            ForEach(sampleVars.prefix(size == .small ? 3 : 4), id: \.0) { key, value in
+                HStack {
+                    Text(key)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer()
+                    Text(value)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+            }
+
+            if size == .small {
+                Text("+1 more")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+// MARK: - Widget Background Color (matches macOS Notification Center)
+
+private extension ShapeStyle where Self == Color {
+    static var widgetBackground: Color {
+        Color(nsColor: .windowBackgroundColor).opacity(0.85)
+    }
+}
+
+// MARK: - Preview
+
+#Preview {
+    WidgetsView(store: RemapStore())
 }
