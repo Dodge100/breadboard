@@ -140,8 +140,9 @@ struct WorkflowBuilderView: View {
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.caption.weight(.medium))
+            .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
+            .textCase(.uppercase)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -332,7 +333,7 @@ private struct WorkflowActionNode: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
-                    .background(.gray.opacity(0.12), in: Capsule())
+                    .background(.quaternary, in: Capsule())
             }
 
             // Quick-op buttons
@@ -418,11 +419,7 @@ private struct WorkflowAddButton: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
-            .background(.quaternary.opacity(0.4), in: Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(.separator, lineWidth: 0.5)
-            )
+            .background(.quaternary.opacity(0.3), in: Capsule())
         }
         .buttonStyle(.plain)
         .help("Add a new \(label.lowercased())")

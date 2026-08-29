@@ -12,90 +12,87 @@ struct ManipulatorEditorView: View {
     @State private var parametersExpanded = false
     @State private var notesExpanded = true
 
-    private enum ActiveLibrary {
+    private enum ActiveLibrary: String, Identifiable {
         case action
         case condition
+
+        var id: String { rawValue }
     }
 
     var body: some View {
-        listContent
+        editorContent
             .background(Color(nsColor: .windowBackgroundColor).opacity(0.3))
-    }
-
-    // MARK: - List Layout
-
-    private var listContent: some View {
-        HStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    headerSection
-                    
-                    // Trigger card
-                    EditorCard {
-                        triggerSection
+            .sheet(item: $activeLibrary) { library in
+                switch library {
+                case .action:
+                    ActionLibraryBrowser(isPresented: sheetBinding) { kind in
+                        if let replaceID = replacingActionID {
+                            store.updateAction(replaceID, in: manipulator.id) { $0.kind = kind }
+                            replacingActionID = nil
+                        } else {
+                            store.updateManipulator(manipulator.id) { $0.actions.append(Action(kind: kind)) }
+                        }
                     }
-                    
-                    // Conditions card
-                    EditorCard {
-                        conditionsSection
-                    }
-                    
-                    // Actions card
-                    EditorCard {
-                        actionsSection
-                    }
-                    
-                    // Parameters card
-                    EditorCard {
-                        parametersSection
-                    }
-                    
-                    // Notes card
-                    EditorCard {
-                        notesSection
-                    }
-                }
-                .padding(16)
-                .frame(maxWidth: 720, alignment: .center)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-
-            // Library slide-in panel
-            if activeLibrary == .action {
-                ActionLibraryPanel(isPresented: Binding(
-                    get: { activeLibrary == .action },
-                    set: { if !$0 { activeLibrary = nil } }
-                )) { kind in
-                    if let replaceID = replacingActionID {
-                        store.updateAction(replaceID, in: manipulator.id) { $0.kind = kind }
-                        replacingActionID = nil
-                    } else {
-                        store.updateManipulator(manipulator.id) { $0.actions.append(Action(kind: kind)) }
-                    }
-                }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
-
-            if activeLibrary == .condition {
-                ConditionLibraryPanel(isPresented: Binding(
-                    get: { activeLibrary == .condition },
-                    set: { if !$0 { activeLibrary = nil } }
-                )) { kind in
-                    if let replaceID = replacingConditionID {
-                        store.updateCondition(replaceID, in: manipulator.id) { $0.kind = kind }
-                        replacingConditionID = nil
-                    } else {
-                        store.updateManipulator(manipulator.id) {
-                            var condition = Condition()
-                            condition.kind = kind
-                            $0.conditions.append(condition)
+                case .condition:
+                    ConditionLibraryBrowser(isPresented: sheetBinding) { kind in
+                        if let replaceID = replacingConditionID {
+                            store.updateCondition(replaceID, in: manipulator.id) { $0.kind = kind }
+                            replacingConditionID = nil
+                        } else {
+                            store.updateManipulator(manipulator.id) {
+                                var condition = Condition()
+                                condition.kind = kind
+                                $0.conditions.append(condition)
+                            }
                         }
                     }
                 }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
             }
+    }
+
+    private var sheetBinding: Binding<Bool> {
+        Binding(
+            get: { activeLibrary != nil },
+            set: { if !$0 { activeLibrary = nil } }
+        )
+    }
+
+    // MARK: - Editor Content
+
+    private var editorContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                headerSection
+                
+                // Trigger card
+                EditorCard {
+                    triggerSection
+                }
+                
+                // Conditions card
+                EditorCard {
+                    conditionsSection
+                }
+                
+                // Actions card
+                EditorCard {
+                    actionsSection
+                }
+                
+                // Parameters card
+                EditorCard {
+                    parametersSection
+                }
+                
+                // Notes card
+                EditorCard {
+                    notesSection
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: 720, alignment: .center)
         }
-        .animation(.easeInOut(duration: 0.25), value: activeLibrary)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
 

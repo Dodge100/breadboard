@@ -70,8 +70,36 @@
     "status": "FIXED — diff-based incremental routing cache"
   },
   {
+    "severity": "high",
+    "area": "RemapModels.swift: Manipulator struct — expensive synthesized Equatable",
+    "description": "Manipulator had synthesized Equatable that deep-compares all nested arrays (actions, conditions, additionalTriggers). With COW-backed Actions, each array element comparison still walks ActionStorage fields. This made SwiftUI's view diffing very expensive — every @Published change triggers [Manipulator] comparison across all list rows.",
+    "fix": "Applied: Custom Equatable on Manipulator that compares lightweight surface properties (id, name, isEnabled, tags, trigger, counts of actions/conditions/additionalTriggers, parameters) instead of deep action content. Added Hashable conformance on ID. This makes SwiftUI diffing O(1) per manipulator instead of O(N_actions).",
+    "status": "FIXED — lightweight Manipulator.== for SwiftUI diffs"
+  },
+  {
+    "severity": "high",
+    "area": "RemapView.swift: ManipulatorRow observed entire RemapStore",
+    "description": "Each ManipulatorRow in the sidebar list had @ObservedObject var store: RemapStore. Every @Published property change (clipboard, recording state, toast, search, etc.) caused ALL rows to re-render — even though the row only displays name, trigger label, and enabled state from the manipulator value passed in.",
+    "fix": "Applied: Removed @ObservedObject from ManipulatorRow. Context menu actions (toggle, duplicate, export, delete) are now passed as closure callbacks from the parent, which captures the store reference. The row only re-renders when its manipulator value actually changes.",
+    "status": "FIXED — ManipulatorRow is a pure presentational view"
+  },
+  {
+    "severity": "high",
+    "area": "MenuBarItemsView.swift: MenuBarItemRow observed entire RemapStore",
+    "description": "MenuBarItemRow had @ObservedObject var store: RemapStore despite not reading any store properties in its body — the row only displays item icon, name, and child count from the item parameter.",
+    "fix": "Applied: Removed @ObservedObject from MenuBarItemRow. The row is now a pure presentational view with zero store dependency.",
+    "status": "FIXED — MenuBarItemRow is a pure presentational view"
+  },
+  {
+    "severity": "medium",
+    "area": "MacroPaletteView.swift: PaletteItemRow observed entire RemapStore",
+    "description": "PaletteItemRow had @ObservedObject var store: RemapStore despite its body only reading manipulator properties. The 'Edit in Editor' context menu action accessed store, causing unnecessary re-renders for all palette rows on every store change.",
+    "fix": "Applied: Removed @ObservedObject from PaletteItemRow. Added onEdit closure callback for the 'Edit in Editor' action. The row is now a pure presentational view.",
+    "status": "FIXED — PaletteItemRow is a pure presentational view"
+  },
+  {
     "severity": "low",
-    "area": "RemapStore.swift: expandVariableTokens O(n²) scanning",
+    "area": "RemapModels.swift: expandVariableTokens O(n²) scanning",
     "description": "expandVariableTokens iterated character by character.",
     "fix": "Applied: replaced with NSRegularExpression-based matching.",
     "status": "FIXED — regex-based replacement"

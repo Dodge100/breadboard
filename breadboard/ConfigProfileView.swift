@@ -19,7 +19,7 @@ struct ConfigProfileManagerView: View {
             // ── Header ──
             HStack {
                 Text("Profiles")
-                    .font(.title3.weight(.semibold))
+                    .font(.headline)
                 Spacer()
                 Button("Done") {
                     dismiss()
@@ -301,128 +301,57 @@ private struct ProfileCard: View {
 // MARK: - Toolbar Profile Switcher
 
 /// Compact profile switcher for the toolbar. Shows the active profile's icon and name,
-/// with a dropdown menu to switch or manage profiles.
+/// with a native dropdown menu to switch or manage profiles.
 struct ProfileSwitcherButton: View {
     @ObservedObject var store: RemapStore
-    @State private var showPopover = false
     @State private var showManager = false
 
     var body: some View {
-        if let active = store.activeProfile {
-            Button {
-                showPopover.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: active.icon)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(active.accentColor)
-                    Text(active.name)
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
-                    Image(systemName: "chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 1)
-                )
-            }
-            .buttonStyle(.borderless)
-            .popover(isPresented: $showPopover, arrowEdge: .bottom) {
-                profilePopover
-            }
-            .help("Switch or manage config profiles")
-            .sheet(isPresented: $showManager) {
-                ConfigProfileManagerView(store: store)
-            }
-        }
-    }
-
-    private var profilePopover: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // ── Header ──
-            Text("Profiles")
-                .font(.headline)
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-            // ── Profile list ──
-            ScrollView {
-                LazyVStack(spacing: 4) {
-                    ForEach(store.profiles) { profile in
-                        let isActive = profile.id == store.activeProfileID
-                        Button {
-                            store.switchProfile(to: profile.id)
-                            showPopover = false
-                        } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: profile.icon)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundStyle(isActive ? .white : profile.accentColor)
-                                    .frame(width: 26, height: 26)
-                                    .background(
-                                        isActive ? profile.accentColor : profile.accentColor.opacity(0.12),
-                                        in: RoundedRectangle(cornerRadius: 6)
-                                    )
-
-                                Text(profile.name)
-                                    .font(.body)
-                                    .lineLimit(1)
-
+        Menu {
+            if store.profiles.isEmpty {
+                Button("No Profiles") { }
+                    .disabled(true)
+            } else {
+                ForEach(store.profiles) { profile in
+                    let isActive = profile.id == store.activeProfileID
+                    Button {
+                        store.switchProfile(to: profile.id)
+                    } label: {
+                        HStack {
+                            Image(systemName: profile.icon)
+                                .foregroundStyle(isActive ? .white : profile.accentColor)
+                                .frame(width: 22, height: 22)
+                                .background(
+                                    isActive ? profile.accentColor : profile.accentColor.opacity(0.12),
+                                    in: RoundedRectangle(cornerRadius: 5)
+                                )
+                            Text(profile.name)
+                            if isActive {
                                 Spacer()
-
-                                if isActive {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(profile.accentColor)
-                                        .font(.system(size: 13))
-                                }
+                                Image(systemName: "checkmark")
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                isActive
-                                    ? Color(nsColor: .controlBackgroundColor)
-                                    : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 8)
-                            )
-                            .overlay(
-                                Group {
-                                    if isActive {
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
-                                    }
-                                }
-                            )
-                            .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 8)
+                Divider()
             }
-            .frame(maxHeight: 260)
-
-            Divider()
-
-            // ── Footer ──
-            Button {
-                showPopover = false
+            Button("Manage Profiles\u{2026}") {
                 showManager = true
-            } label: {
-                Label("Manage Profiles\u{2026}", systemImage: "gearshape")
-                    .font(.body)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color(nsColor: .windowBackgroundColor).opacity(0.2))
+        } label: {
+            if let active = store.activeProfile {
+                HStack(spacing: 4) {
+                    Image(systemName: active.icon)
+                        .foregroundStyle(active.accentColor)
+                    Text(active.name)
+                }
+            } else {
+                Image(systemName: "person.circle")
+            }
         }
-        .frame(width: 240)
+        .help("Switch or manage config profiles")
+        .sheet(isPresented: $showManager) {
+            ConfigProfileManagerView(store: store)
+        }
     }
 }

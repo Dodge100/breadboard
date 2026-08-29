@@ -1,0 +1,13 @@
+# Build products
+build/
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+
+# macOS junk
+.DS_Store
+
+# Code coverage artifacts
+default.profraw
+*.profraw

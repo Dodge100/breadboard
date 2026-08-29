@@ -88,11 +88,12 @@ struct MacroPaletteView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.tertiary)
-                .font(.subheadline)
+                .font(.caption)
 
             TextField("Search macros…", text: $searchText)
                 .textFieldStyle(.plain)
                 .focused($isSearchFocused)
+                .font(.subheadline)
 
             if !searchText.isEmpty {
                 Button {
@@ -104,13 +105,9 @@ struct MacroPaletteView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
-        )
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
         .onChange(of: searchText) { _ in
             selectedIndex = 0
         }
@@ -281,8 +278,8 @@ private struct SectionHeader: View {
                 .textCase(.uppercase)
             Spacer()
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 10)
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
         .padding(.bottom, 4)
     }
 }
@@ -342,12 +339,12 @@ private struct PaletteItemRow: View {
                 if !shortcut.isEmpty && shortcut != "Not recorded" {
                     Text(shortcut)
                         .font(.caption2.monospaced())
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.vertical, 5)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Main Menu Bar Items View
 
@@ -78,11 +79,13 @@ private struct MenuBarItemsSidebar: View {
     }
 
     private var searchField: some View {
-        HStack {
+        HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.tertiary)
+                .font(.caption)
             TextField("Search", text: $store.searchText)
                 .textFieldStyle(.plain)
+                .font(.subheadline)
             if !store.searchText.isEmpty {
                 Button {
                     store.searchText = ""
@@ -90,10 +93,10 @@ private struct MenuBarItemsSidebar: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.tertiary)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 10)
         .padding(.vertical, 4)
     }
 
@@ -324,7 +327,7 @@ private struct MenuBarItemEditorPane: View {
                     }
                 }
 
-                if !item.isSeparator {
+                if !item.isSeparator && item.children.isEmpty {
                     // ── Click Actions card ──
                     EditorCard {
                         CollapsibleStepCard(
@@ -425,7 +428,9 @@ private struct MenuBarItemEditorPane: View {
                             }
                         }
                     }
+                }
 
+                if !item.isSeparator {
                     // ── Sub-items card ──
                     EditorCard {
                         CollapsibleStepCard(
@@ -443,11 +448,11 @@ private struct MenuBarItemEditorPane: View {
                                     ForEach(Array(item.children.enumerated()), id: \.element.id) { index, child in
                                         RecursiveChildRow(
                                             child: child,
+                                            index: index,
+                                            siblingCount: item.children.count,
                                             parentChain: [item.id],
                                             store: store
                                         )
-                                        if index < item.children.count - 1 {
-                                        }
                                     }
                                 }
 
@@ -562,8 +567,45 @@ private struct MenuBarItemEditorPane: View {
 
 // MARK: - Recursive Child Row (supports arbitrary nesting)
 
+// MARK: - Drop Delegate (drag-to-reorder for sub-items)
+
+private struct MenuBarChildRowDropDelegate: DropDelegate {
+    let targetParentID: UUID
+    let targetIndex: Int
+    let store: RemapStore
+    var onHighlight: (Bool) -> Void = { _ in }
+
+    func dropEntered(info: DropInfo) {
+        onHighlight(true)
+    }
+
+    func dropExited(info: DropInfo) {
+        onHighlight(false)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        onHighlight(false)
+        guard let provider = info.itemProviders(for: [.text]).first else { return false }
+        let parentID = targetParentID
+        let index = targetIndex
+        _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let string = object as? String, let id = UUID(uuidString: string) else { return }
+            Task { @MainActor in
+                store.moveMenuBarChildItem(id, toParent: parentID, atIndex: index)
+            }
+        }
+        return true
+    }
+}
+
 private struct RecursiveChildRow: View {
     let child: MenuBarItem
+    var index: Int = 0
+    var siblingCount: Int = 1
     /// Chain of parent IDs from the root down to this child's parent.
     let parentChain: [UUID]
     @ObservedObject var store: RemapStore
@@ -571,6 +613,7 @@ private struct RecursiveChildRow: View {
     @State private var showDeleteAlert = false
     @State private var childrenExpanded = true
     @State private var showActions = false
+    @State private var isDropTarget = false
 
     private var depth: Int { parentChain.count }
 
@@ -578,13 +621,19 @@ private struct RecursiveChildRow: View {
         VStack(alignment: .leading, spacing: 4) {
             // ── This row ──
             HStack(spacing: 8) {
-                // Indent line
-                if depth > 1 {
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(Color(nsColor: .separatorColor).opacity(0.3))
-                        .frame(width: 2)
-                        .padding(.leading, CGFloat(depth - 1) * 12)
-                }
+                // Drag handle
+                Image(systemName: "line.3.horizontal")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 14)
+                    .contentShape(Rectangle())
+                    .onDrag {
+                        NSItemProvider(object: child.id.uuidString as NSString)
+                    }
+                    .onHover { hovering in
+                        if hovering { NSCursor.openHand.push() } else { NSCursor.pop() }
+                    }
+                    .help("Drag to reorder")
 
                 // Disclosure chevron if has children
                 if !child.children.isEmpty {
@@ -632,8 +681,8 @@ private struct RecursiveChildRow: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.subheadline)
 
-                // Action summary badge
-                if child.hasLeftAction || child.hasRightAction {
+                // Action summary badge (submenus can't have click actions)
+                if child.children.isEmpty, child.hasLeftAction || child.hasRightAction {
                     Button {
                         showActions.toggle()
                     } label: {
@@ -660,7 +709,7 @@ private struct RecursiveChildRow: View {
                             store: store
                         )
                     }
-                } else {
+                } else if child.children.isEmpty {
                     Button {
                         showActions.toggle()
                     } label: {
@@ -684,8 +733,8 @@ private struct RecursiveChildRow: View {
                 // Enable toggle
                 Toggle("", isOn: Binding(
                     get: { child.isEnabled },
-                    set: { _ in
-                        _ = store.recursiveUpdateMenuBarItem(child.id, in: &store.menuBarItems) { $0.isEnabled.toggle() }
+                    set: { newValue in
+                        _ = store.recursiveUpdateMenuBarItem(child.id, in: &store.menuBarItems) { $0.isEnabled = newValue }
                     }
                 ))
                 .toggleStyle(.switch)
@@ -699,6 +748,19 @@ private struct RecursiveChildRow: View {
                     } label: {
                         Text(child.isEnabled ? "Disable" : "Enable")
                     }
+                    Button {
+                        store.moveMenuBarChildItem(child.id, offset: -1)
+                    } label: {
+                        Text("Move Up")
+                    }
+                    .disabled(index == 0)
+                    Button {
+                        store.moveMenuBarChildItem(child.id, offset: 1)
+                    } label: {
+                        Text("Move Down")
+                    }
+                    .disabled(index >= siblingCount - 1)
+                    Divider()
                     Button {
                         store.addMenuBarChildItem(to: child.id)
                     } label: {
@@ -727,6 +789,21 @@ private struct RecursiveChildRow: View {
             .padding(.vertical, 4)
             .padding(.leading, CGFloat(depth - 1) * 10)
             .opacity(child.isEnabled ? 1 : 0.5)
+            .background(
+                isDropTarget ? Color.accentColor.opacity(0.15) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6)
+            )
+            .onDrop(
+                of: [UTType.text],
+                delegate: MenuBarChildRowDropDelegate(
+                    targetParentID: parentChain.last ?? child.id,
+                    targetIndex: index,
+                    store: store,
+                    onHighlight: { highlighted in
+                        isDropTarget = highlighted
+                    }
+                )
+            )
 
             // ── Nested children ──
             if !child.children.isEmpty, childrenExpanded {
@@ -734,11 +811,11 @@ private struct RecursiveChildRow: View {
                     ForEach(Array(child.children.enumerated()), id: \.element.id) { index, nestedChild in
                         RecursiveChildRow(
                             child: nestedChild,
+                            index: index,
+                            siblingCount: child.children.count,
                             parentChain: parentChain + [child.id],
                             store: store
                         )
-                        if index < child.children.count - 1 {
-                        }
                     }
 
 

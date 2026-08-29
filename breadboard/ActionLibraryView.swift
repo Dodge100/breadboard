@@ -92,340 +92,428 @@ let actionCategories: [ActionCategory] = [
 
 // MARK: - Action Library Panel
 
-struct ActionLibraryPanel: View {
-    @Binding var isPresented: Bool
-    let onSelect: (ActionKind) -> Void
-    @State private var searchText = ""
-    @State private var hoveredKind: ActionKind?
-    @FocusState private var isSearchFocused: Bool
-    @State private var collapsedCategories: Set<String> = []
+// MARK: - Action Category (for NavigationSplitView sidebar)
 
-    private static let mostUsed: [ActionKind] = [
+private enum ActionCategoryID: Hashable, CaseIterable {
+    case mostUsed
+    case input
+    case variables
+    case applications
+    case windows
+    case system
+    case text
+    case clipboard
+    case automation
+    case filesAndWeb
+    case feedback
+    case control
+
+    var title: String {
+        switch self {
+        case .mostUsed: return "Most Used"
+        case .input: return "Input"
+        case .variables: return "Variables"
+        case .applications: return "Applications"
+        case .windows: return "Windows"
+        case .system: return "System"
+        case .text: return "Text"
+        case .clipboard: return "Clipboard"
+        case .automation: return "Automation"
+        case .filesAndWeb: return "Files & Web"
+        case .feedback: return "Feedback"
+        case .control: return "Control"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .mostUsed: return "star.fill"
+        case .input: return "keyboard"
+        case .variables: return "number"
+        case .applications: return "app"
+        case .windows: return "macwindow"
+        case .system: return "gearshape"
+        case .text: return "textformat"
+        case .clipboard: return "doc.on.clipboard"
+        case .automation: return "gearshape.2"
+        case .filesAndWeb: return "folder"
+        case .feedback: return "bell"
+        case .control: return "switch.2"
+        }
+    }
+
+    var items: [ActionKind] {
+        switch self {
+        case .mostUsed: return Self._mostUsed
+        case .input: return actionCategories[0].actions
+        case .variables: return actionCategories[1].actions
+        case .applications: return actionCategories[2].actions
+        case .windows: return actionCategories[3].actions
+        case .system: return actionCategories[4].actions
+        case .text: return actionCategories[5].actions
+        case .clipboard: return actionCategories[6].actions
+        case .automation: return actionCategories[7].actions
+        case .filesAndWeb: return actionCategories[8].actions
+        case .feedback: return actionCategories[9].actions
+        case .control: return actionCategories[10].actions
+        }
+    }
+
+    private static let _mostUsed: [ActionKind] = [
         .sendKey, .sendText, .setVariable, .openApp, .activateApp,
         .runShell, .setNotification, .delay, .activateLastApp, .getClipboard
     ]
+}
 
-    private var filteredCategories: [ActionCategory] {
+// MARK: - Action Library Browser (NavigationSplitView)
+
+struct ActionLibraryBrowser: View {
+    @Binding var isPresented: Bool
+    let onSelect: (ActionKind) -> Void
+
+    @State private var searchText = ""
+    @State private var selectedCategory: ActionCategoryID? = .mostUsed
+    @FocusState private var isSearchFocused: Bool
+
+    private var filteredCategories: [(ActionCategoryID, [ActionKind])] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return actionCategories }
-        return actionCategories.compactMap { category in
-            let matching = category.actions.filter { kind in
-                kind.rawValue.lowercased().contains(query)
-            }
+        guard !query.isEmpty else {
+            return ActionCategoryID.allCases.filter { $0 != .mostUsed }.map { ($0, $0.items) }
+        }
+        return ActionCategoryID.allCases.filter { $0 != .mostUsed }.compactMap { cat in
+            let matching = cat.items.filter { $0.rawValue.lowercased().contains(query) }
             guard !matching.isEmpty else { return nil }
-            return ActionCategory(category.name, matching)
+            return (cat, matching)
         }
     }
 
+    private var mostUsedFiltered: [ActionKind] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return ActionCategoryID.mostUsed.items }
+        return ActionCategoryID.mostUsed.items.filter { $0.rawValue.lowercased().contains(query) }
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Add Action")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    withAnimation { isPresented = false }
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
+        NavigationSplitView {
+            VStack(spacing: 0) {
+                // Search bar
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
                         .foregroundStyle(.tertiary)
-                        .font(.title3)
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.escape, modifiers: [])
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-
-            // Search bar
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.tertiary)
-                    .font(.caption)
-                TextField("Search actions…", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .focused($isSearchFocused)
-                    .font(.subheadline)
-                if !searchText.isEmpty {
-                    Button {
-                        searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.tertiary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
-            .padding(.horizontal, 8)
-            .padding(.bottom, 6)
-
-            // List
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if searchText.isEmpty {
-                        sectionHeader("Most Used", isExpanded: .constant(true))
-                            .padding(.top, 4)
-                        ForEach(Self.mostUsed, id: \.self) { kind in
-                            actionRow(kind)
+                        .font(.caption)
+                    TextField("Search…", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .font(.subheadline)
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.tertiary)
                         }
-                        separatorLine
+                        .buttonStyle(.plain)
                     }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
 
-                    ForEach(filteredCategories) { category in
-                        sectionHeader(category.name, isExpanded: Binding(
-                            get: { !collapsedCategories.contains(category.name) },
-                            set: { if $0 { collapsedCategories.remove(category.name) } else { collapsedCategories.insert(category.name) } }
-                        ))
-                        if !collapsedCategories.contains(category.name) {
-                            ForEach(category.actions, id: \.self) { kind in
-                                actionRow(kind)
+                // Category list
+                List(selection: $selectedCategory) {
+                    if searchText.isEmpty {
+                        Section {
+                            ForEach([ActionCategoryID.mostUsed], id: \.self) { category in
+                                categoryRow(category)
                             }
                         }
                     }
+
+                    Section("Categories") {
+                        ForEach(ActionCategoryID.allCases.filter { $0 != .mostUsed }, id: \.self) { category in
+                            categoryRow(category)
+                        }
+                    }
                 }
-                .padding(.bottom, 8)
+                .listStyle(.sidebar)
             }
+            .navigationTitle("Actions")
+            .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 220)
+        } detail: {
+            detailContent
         }
-        .frame(width: 240)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.9))
-        .overlay(
-            Rectangle()
-                .fill(.separator.opacity(0.3))
-                .frame(width: 1),
-            alignment: .leading
-        )
-        .shadow(color: .black.opacity(0.08), radius: 6, x: -4, y: 0)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 440, idealWidth: 480, minHeight: 420, idealHeight: 480)
         .onAppear {
             isSearchFocused = true
         }
     }
 
-    private var separatorLine: some View {
-        Rectangle()
-            .fill(.separator.opacity(0.15))
-            .frame(height: 1)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 3)
+    // MARK: - Category Row
+
+    private func categoryRow(_ category: ActionCategoryID) -> some View {
+        Label {
+            Text(category.title)
+        } icon: {
+            Image(systemName: category.icon)
+                .foregroundStyle(category == .mostUsed ? .yellow : .secondary)
+        }
+        .tag(category)
     }
 
-    // MARK: - Section Header
+    // MARK: - Detail Content
 
-    private func sectionHeader(_ title: String, isExpanded: Binding<Bool>) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isExpanded.wrappedValue.toggle()
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
+    @ViewBuilder
+    private var detailContent: some View {
+        if !searchText.isEmpty {
+            itemList(items: mostUsedFiltered, title: nil)
+        } else if let category = selectedCategory {
+            itemList(items: category.items, title: category.title)
+        } else {
+            ContentUnavailableView(
+                "Select a Category",
+                systemImage: "sidebar.left",
+                description: Text("Choose a category from the sidebar.")
+            )
+        }
+    }
+
+    // MARK: - Item List
+
+    private func itemList(items: [ActionKind], title: String?) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let title, searchText.isEmpty {
                 Text(title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
-                Spacer()
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
             }
-            .contentShape(Rectangle())
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-        }
-        .buttonStyle(.plain)
-    }
 
-    // MARK: - Action Row
-
-    private func actionRow(_ kind: ActionKind) -> some View {
-        Button {
-            onSelect(kind)
-            withAnimation { isPresented = false }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: kind.symbol)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16)
-                Text(kind.rawValue)
-                    .font(.subheadline)
-                Spacer(minLength: 0)
+            List {
+                ForEach(items, id: \.self) { kind in
+                    Button {
+                        onSelect(kind)
+                        withAnimation { isPresented = false }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: kind.symbol)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 16)
+                            Text(kind.rawValue)
+                                .font(.subheadline)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 2)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .tag(kind)
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .contentShape(Rectangle())
+            .listStyle(.inset)
         }
-        .buttonStyle(.plain)
     }
 }
 
-// MARK: - Condition Library Panel
+// MARK: - Condition Category (for NavigationSplitView sidebar)
 
-struct ConditionLibraryPanel: View {
-    @Binding var isPresented: Bool
-    let onSelect: (ConditionKind) -> Void
-    @State private var searchText = ""
-    @State private var hoveredKind: ConditionKind?
-    @FocusState private var isSearchFocused: Bool
-    @State private var collapsedCategories: Set<String> = []
+private enum ConditionCategoryID: Hashable, CaseIterable {
+    case mostUsed
+    case appAndWindow
+    case input
+    case variables
+    case system
 
-    private static let mostUsed: [ConditionKind] = [
-        .frontmostApp, .inputSource, .variable, .deviceExists,
-        .runningCondition, .window, .globalVariable
-    ]
-
-    private var filteredCategories: [ConditionCategory] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return conditionCategories }
-        return conditionCategories.compactMap { category in
-            let matching = category.conditions.filter { kind in
-                kind.rawValue.lowercased().contains(query)
-            }
-            guard !matching.isEmpty else { return nil }
-            return ConditionCategory(category.name, matching)
+    var title: String {
+        switch self {
+        case .mostUsed: return "Most Used"
+        case .appAndWindow: return "App & Window"
+        case .input: return "Input"
+        case .variables: return "Variables"
+        case .system: return "System"
         }
     }
 
+    var icon: String {
+        switch self {
+        case .mostUsed: return "star.fill"
+        case .appAndWindow: return "app"
+        case .input: return "keyboard"
+        case .variables: return "number"
+        case .system: return "gearshape"
+        }
+    }
+
+    var items: [ConditionKind] {
+        switch self {
+        case .mostUsed: return Self._mostUsed
+        case .appAndWindow: return conditionCategories[0].conditions
+        case .input: return conditionCategories[1].conditions
+        case .variables: return conditionCategories[2].conditions
+        case .system: return conditionCategories[3].conditions
+        }
+    }
+
+    private static let _mostUsed: [ConditionKind] = [
+        .frontmostApp, .inputSource, .variable, .deviceExists,
+        .runningCondition, .window, .globalVariable
+    ]
+}
+
+// MARK: - Condition Library Browser (NavigationSplitView)
+
+struct ConditionLibraryBrowser: View {
+    @Binding var isPresented: Bool
+    let onSelect: (ConditionKind) -> Void
+
+    @State private var searchText = ""
+    @State private var selectedCategory: ConditionCategoryID? = .mostUsed
+    @FocusState private var isSearchFocused: Bool
+
+    private var filteredCategories: [(ConditionCategoryID, [ConditionKind])] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else {
+            return ConditionCategoryID.allCases.filter { $0 != .mostUsed }.map { ($0, $0.items) }
+        }
+        return ConditionCategoryID.allCases.filter { $0 != .mostUsed }.compactMap { cat in
+            let matching = cat.items.filter { $0.rawValue.lowercased().contains(query) }
+            guard !matching.isEmpty else { return nil }
+            return (cat, matching)
+        }
+    }
+
+    private var mostUsedFiltered: [ConditionKind] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return ConditionCategoryID.mostUsed.items }
+        return ConditionCategoryID.mostUsed.items.filter { $0.rawValue.lowercased().contains(query) }
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Add Condition")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    withAnimation { isPresented = false }
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
+        NavigationSplitView {
+            VStack(spacing: 0) {
+                // Search bar
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
                         .foregroundStyle(.tertiary)
-                        .font(.title3)
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.escape, modifiers: [])
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-
-            // Search bar
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.tertiary)
-                    .font(.caption)
-                TextField("Search conditions…", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .focused($isSearchFocused)
-                    .font(.subheadline)
-                if !searchText.isEmpty {
-                    Button {
-                        searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.tertiary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
-            .padding(.horizontal, 8)
-            .padding(.bottom, 6)
-
-            // List
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if searchText.isEmpty {
-                        sectionHeader("Most Used", isExpanded: .constant(true))
-                            .padding(.top, 4)
-                        ForEach(Self.mostUsed, id: \.self) { kind in
-                            conditionRow(kind)
+                        .font(.caption)
+                    TextField("Search…", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .font(.subheadline)
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.tertiary)
                         }
-                        separatorLine
+                        .buttonStyle(.plain)
                     }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
 
-                    ForEach(filteredCategories) { category in
-                        sectionHeader(category.name, isExpanded: Binding(
-                            get: { !collapsedCategories.contains(category.name) },
-                            set: { if $0 { collapsedCategories.remove(category.name) } else { collapsedCategories.insert(category.name) } }
-                        ))
-                        if !collapsedCategories.contains(category.name) {
-                            ForEach(category.conditions, id: \.self) { kind in
-                                conditionRow(kind)
+                // Category list
+                List(selection: $selectedCategory) {
+                    if searchText.isEmpty {
+                        Section {
+                            ForEach([ConditionCategoryID.mostUsed], id: \.self) { category in
+                                categoryRow(category)
                             }
                         }
                     }
+
+                    Section("Categories") {
+                        ForEach(ConditionCategoryID.allCases.filter { $0 != .mostUsed }, id: \.self) { category in
+                            categoryRow(category)
+                        }
+                    }
                 }
-                .padding(.bottom, 8)
+                .listStyle(.sidebar)
             }
+            .navigationTitle("Conditions")
+            .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 220)
+        } detail: {
+            detailContent
         }
-        .frame(width: 240)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.9))
-        .overlay(
-            Rectangle()
-                .fill(.separator.opacity(0.3))
-                .frame(width: 1),
-            alignment: .leading
-        )
-        .shadow(color: .black.opacity(0.08), radius: 6, x: -4, y: 0)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 440, idealWidth: 480, minHeight: 420, idealHeight: 480)
         .onAppear {
             isSearchFocused = true
         }
     }
 
-    private var separatorLine: some View {
-        Rectangle()
-            .fill(.separator.opacity(0.15))
-            .frame(height: 1)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 3)
+    // MARK: - Category Row
+
+    private func categoryRow(_ category: ConditionCategoryID) -> some View {
+        Label {
+            Text(category.title)
+        } icon: {
+            Image(systemName: category.icon)
+                .foregroundStyle(category == .mostUsed ? .yellow : .secondary)
+        }
+        .tag(category)
     }
 
-    // MARK: - Section Header
+    // MARK: - Detail Content
 
-    private func sectionHeader(_ title: String, isExpanded: Binding<Bool>) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isExpanded.wrappedValue.toggle()
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
+    @ViewBuilder
+    private var detailContent: some View {
+        if !searchText.isEmpty {
+            itemList(items: mostUsedFiltered, title: nil)
+        } else if let category = selectedCategory {
+            itemList(items: category.items, title: category.title)
+        } else {
+            ContentUnavailableView(
+                "Select a Category",
+                systemImage: "sidebar.left",
+                description: Text("Choose a category from the sidebar.")
+            )
+        }
+    }
+
+    // MARK: - Item List
+
+    private func itemList(items: [ConditionKind], title: String?) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let title, searchText.isEmpty {
                 Text(title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
-                Spacer()
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
             }
-            .contentShape(Rectangle())
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-        }
-        .buttonStyle(.plain)
-    }
 
-    // MARK: - Condition Row
-
-    private func conditionRow(_ kind: ConditionKind) -> some View {
-        Button {
-            onSelect(kind)
-            withAnimation { isPresented = false }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: kind.symbol)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16)
-                Text(kind.rawValue)
-                    .font(.subheadline)
-                Spacer(minLength: 0)
+            List {
+                ForEach(items, id: \.self) { kind in
+                    Button {
+                        onSelect(kind)
+                        withAnimation { isPresented = false }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: kind.symbol)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 16)
+                            Text(kind.rawValue)
+                                .font(.subheadline)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 2)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .tag(kind)
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .contentShape(Rectangle())
+            .listStyle(.inset)
         }
-        .buttonStyle(.plain)
     }
 }

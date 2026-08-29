@@ -543,6 +543,9 @@ final class RemapStore: ObservableObject {
         let child = MenuBarItem(name: "Sub Item")
         objectWillChange.send()
         menuBarItems[index].children.append(child)
+        // Submenus can't have click actions — clear any that exist.
+        menuBarItems[index].leftClickAction = nil
+        menuBarItems[index].rightClickAction = nil
         saveMenuBarItemsImmediate()
     }
 
@@ -553,6 +556,9 @@ final class RemapStore: ObservableObject {
                 let child = MenuBarItem(name: "Sub Item")
                 objectWillChange.send()
                 items[i].children.append(child)
+                // Submenus can't have click actions — clear any that exist.
+                items[i].leftClickAction = nil
+                items[i].rightClickAction = nil
                 saveMenuBarItemsImmediate()
                 return true
             }
@@ -628,6 +634,92 @@ final class RemapStore: ObservableObject {
                 return true
             }
             if recursiveDeleteMenuBarChildItem(childID, in: &items[i].children) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Move a child item (at any depth) up or down among its siblings.
+    /// `offset` is -1 for up, +1 for down.
+    func moveMenuBarChildItem(_ childID: UUID, offset: Int) {
+        guard moveNestedMenuBarChildItem(childID, offset: offset, in: &menuBarItems) else { return }
+        saveMenuBarItemsImmediate()
+    }
+
+    /// Recursively find the sibling list containing `childID` and move it by `offset`.
+    @discardableResult
+    private func moveNestedMenuBarChildItem(_ childID: UUID, offset: Int, in items: inout [MenuBarItem]) -> Bool {
+        for i in items.indices {
+            if let j = items[i].children.firstIndex(where: { $0.id == childID }) {
+                let target = j + offset
+                guard items[i].children.indices.contains(target) else { return false }
+                objectWillChange.send()
+                let moved = items[i].children.remove(at: j)
+                items[i].children.insert(moved, at: target)
+                return true
+            }
+            if moveNestedMenuBarChildItem(childID, offset: offset, in: &items[i].children) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Move a child (at any depth) so it becomes a child of `targetParentID` at `targetIndex`.
+    /// If the target parent is the child's current parent, this reorders it among its siblings.
+    func moveMenuBarChildItem(_ childID: UUID, toParent targetParentID: UUID, atIndex targetIndex: Int) {
+        guard childID != targetParentID,
+              let child = findMenuBarItem(childID, in: menuBarItems),
+              !containsMenuBarItem(targetParentID, in: [child]),
+              let moved = extractMenuBarChildItem(childID, from: &menuBarItems),
+              insertMenuBarChildItem(moved, into: targetParentID, at: targetIndex, in: &menuBarItems)
+        else { return }
+        saveMenuBarItemsImmediate()
+    }
+
+    private func findMenuBarItem(_ id: UUID, in items: [MenuBarItem]) -> MenuBarItem? {
+        for item in items {
+            if item.id == id { return item }
+            if let found = findMenuBarItem(id, in: item.children) { return found }
+        }
+        return nil
+    }
+
+    private func containsMenuBarItem(_ id: UUID, in items: [MenuBarItem]) -> Bool {
+        for item in items {
+            if item.id == id { return true }
+            if containsMenuBarItem(id, in: item.children) { return true }
+        }
+        return false
+    }
+
+    /// Remove a child at any depth from its sibling list and return it.
+    @discardableResult
+    private func extractMenuBarChildItem(_ childID: UUID, from items: inout [MenuBarItem]) -> MenuBarItem? {
+        for i in items.indices {
+            if let j = items[i].children.firstIndex(where: { $0.id == childID }) {
+                objectWillChange.send()
+                return items[i].children.remove(at: j)
+            }
+            if let found = extractMenuBarChildItem(childID, from: &items[i].children) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    /// Insert an item into the children of `parentID` at `index` (searches recursively).
+    @discardableResult
+    private func insertMenuBarChildItem(_ item: MenuBarItem, into parentID: UUID, at index: Int, in items: inout [MenuBarItem]) -> Bool {
+        for i in items.indices {
+            if items[i].id == parentID {
+                let clamped = min(max(index, 0), items[i].children.count)
+                objectWillChange.send()
+                items[i].children.insert(item, at: clamped)
+                return true
+            }
+            if insertMenuBarChildItem(item, into: parentID, at: index, in: &items[i].children) {
                 return true
             }
         }
